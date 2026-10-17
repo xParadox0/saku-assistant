@@ -41,7 +41,7 @@ jobs:
         run: |
           docker compose --profile dashboard up --build -d web
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8090/healthz && break; sleep 2; done
-          curl -sf http://127.0.0.1:8090/ | tee overview.html | grep -q "Rp15.862.010"
+          curl -sf http://127.0.0.1:8090/ | tee overview.html | grep -q "Rp14.445.020"
           curl -sf http://127.0.0.1:8090/accounts | grep -q "Wallet (demo)"
           curl -sf http://127.0.0.1:8090/admin | grep -q "No component has reported yet"
           docker compose --profile dashboard down -v

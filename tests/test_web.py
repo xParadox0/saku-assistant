@@ -66,13 +66,14 @@ def csrf(client, email):
 # ---- tenant isolation ------------------------------------------------------------------------------
 def test_overview_shows_only_own_data(client):
     page = client.get("/", headers=as_("alice@example.com")).text
-    assert "ALICE SALARY" in page and "Rp5.000.000" in page
-    assert "BOB" not in page and "777" not in page
+    low = page.lower()  # descriptions are shown in title case; compare case-insensitively
+    assert "alice salary" in low and "Rp5.000.000" in page
+    assert "bob" not in low and "777" not in page
 
 
 def test_unknown_email_is_refused(client):
     r = client.get("/", headers=as_("stranger@example.com"))
-    assert r.status_code == 403 and "ALICE" not in r.text
+    assert r.status_code == 403 and "alice salary" not in r.text.lower()
 
 
 def test_cannot_touch_another_tenants_account(client, seeded, upload_dir):
@@ -109,8 +110,8 @@ def test_admin_requires_admin_role(client):
 def test_admin_shows_metadata_not_transactions(client):
     page = client.get("/admin", headers=as_("ops@example.com")).text
     assert "alice" in page and "bob" in page
-    for leaked in ("ALICE SALARY", "BOB PRIVATE PURCHASE", "Bob Secret Account", "777.000", "5.000.000"):
-        assert leaked not in page
+    for leaked in ("alice salary", "bob private purchase", "bob secret account", "777.000", "5.000.000"):
+        assert leaked not in page.lower()
     assert "No component has reported yet" in page  # empty heartbeats are shown as a warning, not as calm
 
 
@@ -185,7 +186,7 @@ def test_demo_tenant_renders(conn, db_url):
     load_demo(Repo(conn))
     app = create_app(lambda: psycopg.connect(db_url, autocommit=True), DevAuth("demo@saku.local"), SECRET)
     page = TestClient(app).get("/").text
-    assert "September 2026" in page and "Rp15.862.010" in page  # matches the CLI demo output
+    assert "your September" in page and "Rp14.445.020" in page  # matches the CLI demo output
 
 
 # ---- Cloudflare Access JWT ---------------------------------------------------------------------------
@@ -233,7 +234,7 @@ def test_unsigned_email_header_alone_is_not_identity(keypair, seeded):
     app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
                      CloudflareAccessAuth(TEAM, AUD, lambda: jwks), SECRET)
     r = TestClient(app).get("/", headers={"cf-access-authenticated-user-email": "alice@example.com"})
-    assert r.status_code == 401 and "ALICE" not in r.text
+    assert r.status_code == 401 and "alice salary" not in r.text.lower()
 
 
 def test_full_request_with_valid_jwt(keypair, seeded):
@@ -241,7 +242,7 @@ def test_full_request_with_valid_jwt(keypair, seeded):
     app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
                      CloudflareAccessAuth(TEAM, AUD, lambda: jwks), SECRET)
     r = TestClient(app).get("/", headers={"cf-access-jwt-assertion": token(priv)})
-    assert r.status_code == 200 and "ALICE SALARY" in r.text
+    assert r.status_code == 200 and "alice salary" in r.text.lower()
 
 
 # ---- startup guards ----------------------------------------------------------------------------------
@@ -278,4 +279,4 @@ def test_upload_via_picker_route(client, seeded):
     r = client.post("/imports", data={"csrf": tok, "account_id": str(seeded["alice_acc"])},
                     files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
     assert r.status_code == 303
-    assert "PICKER TEST" in client.get("/", headers=as_(alice)).text
+    assert "picker test" in client.get("/", headers=as_(alice)).text.lower()

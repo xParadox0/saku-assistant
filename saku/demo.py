@@ -70,6 +70,19 @@ def generate(year: int = 2026, months: tuple[int, ...] = (7, 8, 9), seed: int = 
         ]
         for key, day, amt, desc in spend:
             add(key, day, m, amt, desc); t.spending += -amt
+
+        # more variety for the dashboard; a second generator so the original sequence above stays unchanged
+        rnd2 = random.Random(seed * 100 + m)
+        extra = [
+            *[("wallet", rnd2.randint(1, 28), -rnd2.randrange(18_000, 45_001, 1000), "KOPI SUSU DEMO") for _ in range(4 + m % 3)],
+            *[("bank_b", rnd2.randint(1, 28), -rnd2.randrange(120_000, 750_001, 1000), "TOKO ONLINE DEMO") for _ in range(1 + m % 2)],
+            ("bank_a", rnd2.randint(1, 28), -rnd2.randrange(60_000, 240_001, 1000), "APOTEK DEMO"),
+            ("bank_b", 7, -349_000, "INTERNET RUMAH DEMO"),
+            ("bank_b", 18, -59_990, "MUSIC DEMO SUBS"),
+            *[("wallet", rnd2.randint(1, 28), -5_000, "PARKIR DEMO") for _ in range(3)],
+        ]
+        for key, day, amt, desc in extra:
+            add(key, day, m, amt, desc); t.spending += -amt
         add("bank_a", 28, m, -15_000, "BIAYA ADM", kind="fee"); t.spending += 15_000
 
         if m == months[1]:

@@ -233,6 +233,66 @@ class Repo:
             (tenant_id, account_id, source, file_sha256, parser, error[:500]),
         ).fetchone()[0]
 
+    # ---- categories and insights --------------------------------------------------------------------
+    def apply_categories(self, tenant_id: str) -> int:
+        """Label uncategorised rows. Kind first, then income, tenant rules, built-in rules, else 'other'.
+        Rows a user labelled by hand (cat_source = 'user') are never touched."""
+        from .categorise import BUILTIN_RULES
+        n = 0
+        n += self.c.execute(
+            "UPDATE txn SET category = CASE kind WHEN 'own_transfer' THEN 'transfer' WHEN 'fee' THEN 'fees' "
+            " WHEN 'refund' THEN 'refund' END, cat_source = 'builtin' "
+            "WHERE tenant_id = %s AND kind <> 'normal' AND (cat_source IS DISTINCT FROM 'user') "
+            " AND category IS DISTINCT FROM CASE kind WHEN 'own_transfer' THEN 'transfer' WHEN 'fee' THEN 'fees' "
+            " WHEN 'refund' THEN 'refund' END", (tenant_id,)).rowcount
+        n += self.c.execute(
+            "UPDATE txn SET category = 'income', cat_source = 'builtin' WHERE tenant_id = %s AND kind = 'normal' "
+            "AND amount > 0 AND category IS NULL", (tenant_id,)).rowcount
+        rules = self.c.execute("SELECT pattern, category FROM category_rule WHERE tenant_id = %s ORDER BY id",
+                               (tenant_id,)).fetchall()
+        for pattern, cat in rules:
+            n += self.c.execute(
+                "UPDATE txn SET category = %s, cat_source = 'rule' WHERE tenant_id = %s AND kind = 'normal' "
+                "AND amount < 0 AND category IS NULL AND description ~* %s", (cat, tenant_id, pattern)).rowcount
+        for cat, pattern in BUILTIN_RULES:
+            n += self.c.execute(
+                "UPDATE txn SET category = %s, cat_source = 'builtin' WHERE tenant_id = %s AND kind = 'normal' "
+                "AND amount < 0 AND category IS NULL AND description ~* %s", (cat, tenant_id, pattern)).rowcount
+        n += self.c.execute(
+            "UPDATE txn SET category = 'other', cat_source = 'builtin' WHERE tenant_id = %s AND kind = 'normal' "
+            "AND amount < 0 AND category IS NULL", (tenant_id,)).rowcount
+        return n
+
+    def spending_by_category(self, tenant_id: str, start: date, end: date) -> list[dict]:
+        """Spending per category for [start, end). Fees count as spending; refunds reduce their own line."""
+        cur = self.c.execute(
+            "SELECT COALESCE(category, 'other'), -SUM(amount), COUNT(*) FROM txn "
+            "WHERE tenant_id = %s AND booked_on >= %s AND booked_on < %s AND amount < 0 "
+            " AND kind IN ('normal', 'fee') GROUP BY 1 ORDER BY 2 DESC", (tenant_id, start, end))
+        return [{"category": c, "amount": Decimal(a), "count": n} for c, a, n in cur.fetchall()]
+
+    def recurring_charges(self, tenant_id: str, until: date, months: int = 3) -> list[dict]:
+        """Same description charged in at least 2 of the last `months` months: likely a subscription or a bill."""
+        y, m = until.year, until.month
+        for _ in range(months - 1):
+            y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+        since = date(y, m, 1)
+        cur = self.c.execute(
+            "SELECT description, COUNT(DISTINCT date_trunc('month', booked_on)), -AVG(amount)::numeric(18,0), "
+            " MAX(booked_on), MAX(category) FROM txn "
+            "WHERE tenant_id = %s AND kind = 'normal' AND amount < 0 AND booked_on >= %s "
+            " AND category IN ('subscriptions', 'bills') "
+            "GROUP BY description HAVING COUNT(DISTINCT date_trunc('month', booked_on)) >= 2 ORDER BY 3 DESC",
+            (tenant_id, since))
+        return [{"description": d, "months": n, "average": Decimal(a), "last": l, "category": c}
+                for d, n, a, l, c in cur.fetchall()]
+
+    def daily_spending(self, tenant_id: str, start: date, end: date) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT booked_on, -SUM(amount) FROM txn WHERE tenant_id = %s AND booked_on >= %s AND booked_on < %s "
+            "AND amount < 0 AND kind IN ('normal', 'fee') GROUP BY 1 ORDER BY 1", (tenant_id, start, end))
+        return [{"day": d, "amount": Decimal(a)} for d, a in cur.fetchall()]
+
     # ---- dashboard reads ----------------------------------------------------------------------------
     def latest_month(self, tenant_id: str) -> date | None:
         return self.c.execute(
@@ -255,11 +315,11 @@ class Repo:
 
     def recent_txns(self, tenant_id: str, limit: int = 15) -> list[dict]:
         cur = self.c.execute(
-            "SELECT t.booked_on, a.label, t.description, t.amount, t.kind FROM txn t "
+            "SELECT t.booked_on, a.label, t.description, t.amount, t.kind, t.category FROM txn t "
             "JOIN account a ON a.id = t.account_id AND a.tenant_id = t.tenant_id "
             "WHERE t.tenant_id = %s ORDER BY t.booked_on DESC, t.id DESC LIMIT %s", (tenant_id, limit),
         )
-        return [dict(zip(("booked_on", "account", "description", "amount", "kind"), r)) for r in cur.fetchall()]
+        return [dict(zip(("booked_on", "account", "description", "amount", "kind", "category"), r)) for r in cur.fetchall()]
 
     def import_batches(self, tenant_id: str, limit: int = 10) -> list[dict]:
         cur = self.c.execute(

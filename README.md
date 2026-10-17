@@ -45,12 +45,17 @@ Example output, all synthetic:
 ```text
 own transfers paired: 15
 
-July 2026: income Rp19.500.000, spending Rp2.810.990, surplus Rp16.689.010 (10 own-transfer rows excluded)
+July 2026: income Rp19.500.000, spending Rp4.657.980, surplus Rp14.842.020 (10 own-transfer rows excluded)
 ```
 
 ## Design
 
-Server-rendered HTML, no JavaScript, two self-hosted typefaces (Space Grotesk and Inter, both SIL OFL, licence files in `saku/web/static/fonts/`). Flat near-black surfaces separated by tone, one cyan accent for income and the primary action, neutral grey for spending, red only for a deficit or a failed import. The stylesheet passes the [taste-skill](https://github.com/Leonxlnx/taste-skill) lint with no failures. Public dashboard shots for reference were studied for layout principles only; no third-party asset is used.
+Server-rendered HTML, no JavaScript. A bento overview: what is left this month, where the money went (category ring), plain-language observations computed from SQL, month-by-month trend, accounts, latest activity and charges that repeat every month. Motion is CSS only and switches off for users who ask for reduced motion.
+
+- Typefaces: Space Grotesk and Inter, SIL OFL, self-hosted (`saku/web/static/fonts/`).
+- Icons: [Phosphor Icons](https://github.com/phosphor-icons/core) duotone, MIT (`saku/web/static/icons/LICENSE-phosphor.txt`), rebuilt with `tools/build_icons.py`.
+- Photos: optional header photography from Unsplash, fetched by `tools/fetch_photos.py` and not committed until each licence is confirmed. Without them the header falls back to a flat surface.
+- The stylesheet passes the [taste-skill](https://github.com/Leonxlnx/taste-skill) lint with no failures.
 
 ## Run the dashboard
 

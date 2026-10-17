@@ -1,85 +1,107 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon, acct_icon %}
 {% block title %}Accounts · Saku{% endblock %}
 {% block content %}
-<header class="page-head">
-  <h1>Accounts</h1>
-  <p class="lede">Add each account by name, then upload its statement. Saku never asks for an internet-banking login, PIN or OTP.</p>
+<header class="hello rise">
+  <div>
+    <h1>Your accounts</h1>
+    <p class="lede">Add each bank or e-wallet by name, then upload its statement. No bank login needed.</p>
+  </div>
 </header>
 
-{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
 {% if result %}
-  <p class="notice {{ 'bad' if result.status == 'failed' else 'good' }}">
-    {% if result.status == 'failed' %}
-      <strong>Import failed for {{ result.account }}.</strong> {{ result.error }}. Nothing was imported.
-    {% else %}
-      <strong>{{ result.account }}:</strong> {{ result.rows_in }} rows read, {{ result.rows_new }} new, {{ result.rows_dup }} already imported.
-      The file was deleted after reading.
-    {% endif %}
-  </p>
+  {% if result.status == 'failed' %}
+  <p class="notice bad rise">{{ icon('i-alert') }}<span><strong>Import failed for {{ result.account }}.</strong> {{ result.error }}. Nothing was imported.</span></p>
+  {% else %}
+  <p class="notice good rise">{{ icon('i-check') }}<span><strong>{{ result.account }}:</strong> {{ result.rows_in }} rows read, {{ result.rows_new }} new, {{ result.rows_dup }} already imported.
+    The file was deleted after reading.</span></p>
+  {% endif %}
 {% endif %}
 
+<div class="acct-grid">
+  {% for a in accounts %}
+  <article class="acct-card k-{{ a.kind }} rise d{{ loop.index if loop.index < 5 else 5 }}">
+    <div class="acct-card-top">
+      <span class="acct-ic">{{ acct_icon(a.kind) }}</span>
+      <div><b>{{ a.label }}</b><small>{{ a.kind }} · {{ a.provider }}{% if a.last4 %} · ··{{ a.last4 }}{% endif %}</small></div>
+    </div>
+    <div class="acct-stats">
+      <div><b>{{ a.transactions }}</b><span>transactions</span></div>
+      <div><b>{{ a.last_booked.strftime('%-d %b') if a.last_booked else '-' }}</b><span>latest date</span></div>
+    </div>
+    {% if a.last_import_status %}
+    <span class="tag {{ 'bad' if a.last_import_status == 'failed' else 'good' }}">{{ icon('i-x' if a.last_import_status == 'failed' else 'i-check') }}Last import {{ a.last_import_status }}</span>
+    {% else %}
+    <span class="tag">No import yet</span>
+    {% endif %}
+    <details class="manage">
+      <summary>{{ icon('i-chevron') }}Rename or remove</summary>
+      <div class="manage-body">
+        <form method="post" action="/accounts/{{ a.id }}/rename" class="row-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="text" name="label" value="{{ a.label }}" maxlength="60" required aria-label="New name for {{ a.label }}">
+          <button type="submit" class="quiet">Save</button>
+        </form>
+        {% if a.transactions == 0 %}
+        <form method="post" action="/accounts/{{ a.id }}/delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="danger" aria-label="Delete {{ a.label }}">{{ icon('i-x') }}Delete account</button>
+        </form>
+        {% else %}
+        <p class="note">Accounts with transactions cannot be deleted.</p>
+        {% endif %}
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+  <a class="add-card rise d5" href="#add">
+    <span class="chip-plus">{{ icon('i-plus') }}</span>
+    <b>Add an account</b>
+    <span class="note">Bank, e-wallet or cash</span>
+  </a>
+</div>
+
 {% if accounts %}
-<section class="panel tight">
-  <h2>Upload a statement</h2>
+<section class="card" id="upload">
+  <div class="drop">
+    <span class="drop-ic">{{ icon('i-upload') }}</span>
+    <div>
+      <h2>Upload a statement</h2>
+      <p class="lede small">Pick the account, choose the file, done. Uploading the same file twice is safe: duplicates are skipped.</p>
+    </div>
+  </div>
   <form method="post" action="/imports" enctype="multipart/form-data" class="upload">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label class="field"><span>Account</span>
       <select name="account_id">{% for a in accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}</select></label>
     <label class="field"><span>Statement file, up to {{ max_mb }} MB</span>
       <input type="file" name="file" accept=".csv,.pdf" required></label>
-    <button type="submit">Import</button>
+    <button type="submit">{{ icon('i-upload') }}Import</button>
   </form>
-  <p class="hint">Accepted now: the Saku CSV format. <a href="/accounts/template.csv">Download the template</a>. Bank-specific formats are added one by one.</p>
-</section>
-
-<section class="panel">
-  <h2>Your accounts</h2>
-  <table>
-    <thead><tr><th>Account</th><th class="num">Transactions</th><th class="hide-sm">Latest date</th><th class="hide-sm">Last import</th><th class="num">Manage</th></tr></thead>
-    <tbody>
-    {% for a in accounts %}
-      <tr>
-        <td><span class="strong">{{ a.label }}</span><span class="sub-line">{{ a.kind }} · {{ a.provider }}{% if a.last4 %} ··· {{ a.last4 }}{% endif %}</span></td>
-        <td class="num">{{ a.transactions }}</td>
-        <td class="hide-sm nowrap">{{ a.last_booked.strftime('%d %b %Y') if a.last_booked else '-' }}</td>
-        <td class="hide-sm">{% if a.last_import_status %}<span class="tag {{ 'bad' if a.last_import_status == 'failed' else 'good' }}">{{ a.last_import_status }}</span>{% else %}-{% endif %}</td>
-        <td>
-          <div class="actions">
-            <form method="post" action="/accounts/{{ a.id }}/rename" class="row-form">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <input type="text" name="label" value="{{ a.label }}" maxlength="60" required aria-label="New name for {{ a.label }}">
-              <button type="submit" class="quiet">Rename</button>
-            </form>
-            {% if a.transactions == 0 %}
-            <form method="post" action="/accounts/{{ a.id }}/delete">
-              <input type="hidden" name="csrf" value="{{ csrf }}">
-              <button type="submit" class="danger" aria-label="Delete {{ a.label }}">Delete</button>
-            </form>
-            {% endif %}
-          </div>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <p class="hint">Accepted now: the Saku CSV format. <a href="/accounts/template.csv">Download the template</a>. Bank formats are being added one by one.</p>
 </section>
 {% endif %}
 
-<section class="panel">
-  <h2>Add an account</h2>
+<section class="card" id="add">
+  <div class="card-head"><h2>Add an account</h2></div>
   <form method="post" action="/accounts" class="grid-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="field"><span>Type</span>
-      <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
+    <fieldset class="kind-pick wide">
+      <legend>Type</legend>
+      {% for k in kinds %}
+      <label><input type="radio" name="kind" value="{{ k }}" {% if loop.first %}checked{% endif %}><span>{{ acct_icon(k) }}{{ {'bank': 'Bank', 'ewallet': 'E-wallet', 'cash': 'Cash'}.get(k, k|title) }}</span></label>
+      {% endfor %}
+    </fieldset>
     <label class="field"><span>Provider</span>
-      <input name="provider" list="providers" required pattern="[a-z0-9_]{2,30}" placeholder="bca, gopay, cash">
+      <input name="provider" list="providers" required pattern="[a-z0-9_]{2,30}" placeholder="e.g. cash or other">
       <datalist id="providers">{% for p in providers %}<option value="{{ p }}">{% endfor %}</datalist></label>
-    <label class="field wide"><span>Name shown in Saku</span>
-      <input name="label" required maxlength="60" placeholder="Daily spending"></label>
     <label class="field"><span>Last 4 digits, optional</span>
       <input name="last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>
-    <div><button type="submit">Add account</button></div>
+    <label class="field wide"><span>Name shown in Saku</span>
+      <input name="label" required maxlength="60" placeholder="Daily spending"></label>
+    <div><button type="submit">{{ icon('i-plus') }}Add account</button></div>
   </form>
-  <p class="hint">Only the last 4 digits are kept. Never enter a full account number, password, PIN or OTP.</p>
+  <p class="hint">{{ icon('i-shield') }} Only the last 4 digits are kept. Never enter a full account number, password, PIN or OTP.</p>
 </section>
 {% endblock %}

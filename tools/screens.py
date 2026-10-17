@@ -20,6 +20,7 @@ async def main():
             page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
             for name in ("", "accounts", "imports", "admin"):
                 r = await page.goto(f"{BASE}/{name}", wait_until="networkidle")
+                await page.wait_for_timeout(1600)  # let entrance animations finish
                 f = OUT / f"{tag}-{name or 'overview'}.png"
                 await page.screenshot(path=str(f), full_page=True)
                 overflow = await page.evaluate("document.documentElement.scrollWidth > window.innerWidth + 1")

@@ -1,0 +1,3 @@
+{%- macro icon(id, cls='') -%}<svg class="ic {{ cls }}" aria-hidden="true"><use href="#{{ id }}"/></svg>{%- endmacro -%}
+{%- macro chip(key) -%}{%- set c = cat(key) -%}<span class="chip {{ c[2] }}" title="{{ c[0] }}">{{ icon(c[1]) }}</span>{%- endmacro -%}
+{%- macro acct_icon(kind) -%}{{ icon({'bank': 'i-bank', 'ewallet': 'i-phone', 'cash': 'i-cash'}.get(kind, 'i-wallet')) }}{%- endmacro -%}

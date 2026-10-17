@@ -28,6 +28,7 @@ def load_demo(repo: Repo) -> demo.DemoData:
         res = repo.import_rows(demo.DEMO_TENANT, acc, data.rows[key], source="demo", parser="demo-generator/1")
         print(f"import {label:<15} rows {res.rows_in:>3}  new {res.rows_new:>3}  duplicate {res.rows_dup:>3}")
     print(f"own transfers paired: {repo.detect_own_transfers(demo.DEMO_TENANT)}")
+    repo.apply_categories(demo.DEMO_TENANT)
     repo.add_member(DEMO_EMAIL, demo.DEMO_TENANT, "admin")
     return data
 

@@ -17,7 +17,7 @@ import secrets
 import shutil
 import tempfile
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable
@@ -30,6 +30,8 @@ from fastapi.templating import Jinja2Templates
 
 from .. import parsers
 from ..db import connect, init_schema
+from .. import insights
+from ..categorise import CATEGORIES, label as cat_label
 from ..format import rupiah, rupiah_short, signed_rupiah
 from ..repo import ACCOUNT_KINDS, Repo
 from .auth import AuthError, CloudflareAccessAuth, DevAuth, Identity
@@ -68,12 +70,27 @@ def _chart(series: list[dict]) -> dict:
     return {"w": w, "h": h, "base": base, "bars": bars}
 
 
+def _donut(cats: list[dict], total: Decimal) -> list[dict]:
+    """Ring segments for an SVG donut: circumference 100 on r=15.9155, so dash lengths are percentages."""
+    segs, offset = [], 25.0  # start at 12 o'clock
+    for c in cats:
+        share = float(c["amount"] / total * 100) if total > 0 else 0.0
+        name, icon, colour = cat_label(c["category"])
+        segs.append({"key": c["category"], "name": name, "icon": icon, "colour": colour, "amount": c["amount"],
+                     "count": c["count"], "pct": round(share), "dash": round(max(share - 0.6, 0.0), 2),
+                     "offset": round(offset, 2), "bar": max(round(share), 2)})
+        offset -= share
+    return segs
+
+
 def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, secret: str,
                upload_root: str | None = None) -> FastAPI:
     app = FastAPI(title="Saku", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["rupiah"] = rupiah
     templates.env.filters["signed_rupiah"] = signed_rupiah
+    templates.env.filters["rupiah_short"] = rupiah_short
+    templates.env.globals["cat"] = cat_label
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     key = secret.encode()
     upload_root = upload_root or tempfile.gettempdir()
@@ -142,11 +159,24 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             month = repo.latest_month(t)
             ctx = {"page": "overview", "month": month, "accounts": repo.account_stats(t)}
             if month:
+                repo.apply_categories(t)
                 series = repo.monthly_series(t, month, 6)
                 cf = series[-1]
+                prev = series[-2] if len(series) > 1 else None
                 saved_pct = int((cf["net"] / cf["income"] * 100).to_integral_value()) if cf["income"] > 0 else None
-                ctx.update(cf=cf, prev=series[-2] if len(series) > 1 else None, series=series, saved_pct=saved_pct,
-                           chart=_chart(series), recent=repo.recent_txns(t, 10))
+                cats = repo.spending_by_category(t, cf["start"], cf["end"])
+                prev_cats = repo.spending_by_category(t, prev["start"], prev["end"]) if prev else []
+                daily = repo.daily_spending(t, cf["start"], cf["end"])
+                recurring = repo.recurring_charges(t, cf["start"])
+                recent = repo.recent_txns(t, 8)
+                covered, days = insights.month_progress(cf["start"], max((d["day"] for d in daily), default=None))
+                now = datetime.now(timezone(timedelta(hours=7)))
+                ctx.update(cf=cf, prev=prev, series=series, saved_pct=saved_pct, chart=_chart(series),
+                           recent=recent, donut=_donut(cats, cf["spending"] + cf["refunds"]),
+                           notes=insights.build(cf, prev, cats, prev_cats, recurring, daily),
+                           recurring=recurring, covered=covered, days=days,
+                           kept_bar=max(min(saved_pct or 0, 100), 0),
+                           hello=insights.greeting(now.hour), first_name=ident.email.split("@")[0].split(".")[0].title())
             return render(request, "overview.html", ident, member, **ctx)
 
     @app.get("/accounts", response_class=HTMLResponse)
@@ -227,6 +257,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                     else:
                         batch_id = repo.import_rows(t, account_id, rows, "csv", parser.name, sha).batch_id
                         repo.detect_own_transfers(t)
+                        repo.apply_categories(t)
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
         return RedirectResponse(f"/accounts?batch={batch_id}", status_code=303)
