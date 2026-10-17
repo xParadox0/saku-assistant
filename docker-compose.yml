@@ -1,0 +1,27 @@
+# Local demo stack. The database port is not published to the host, and the
+# password below is a local-only demo value. Use a real secret in any other setup.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: saku
+      POSTGRES_USER: saku
+      POSTGRES_PASSWORD: saku-demo-only
+    volumes:
+      - saku_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U saku -d saku"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://saku:saku-demo-only@db:5432/saku
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  saku_pg:

@@ -1,0 +1,20 @@
+# secrets and local config
+.env
+.env.*
+*.pem
+*.key
+
+# private working notes and real data, never committed
+docs/private/
+data/
+statements/
+*.pdf
+*.csv
+
+# python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
