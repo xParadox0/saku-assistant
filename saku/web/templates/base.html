@@ -4,25 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark">
   <title>{% block title %}Saku{% endblock %}</title>
+  <link rel="preload" href="/static/fonts/space-grotesk-600.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/saku.css">
 </head>
 <body>
-  <header class="top">
-    <a class="brand" href="/">Saku</a>
+<div class="shell">
+  <div class="side-col">
+  <aside class="side">
+    <div>
+      <a class="wordmark" href="/">Saku<span>.</span></a>
+      <p class="tagline">Every bank and e-wallet, in one honest monthly picture.</p>
+    </div>
     {% if email %}
-    <nav>
+    <nav aria-label="Main">
       <a href="/" {% if page == 'overview' %}aria-current="page"{% endif %}>Overview</a>
       <a href="/accounts" {% if page == 'accounts' %}aria-current="page"{% endif %}>Accounts</a>
       <a href="/imports" {% if page == 'imports' %}aria-current="page"{% endif %}>Imports</a>
-      {% if role == 'admin' %}<a href="/admin" {% if page == 'admin' %}aria-current="page"{% endif %}>Ops</a>{% endif %}
+      {% if role == 'admin' %}<a href="/admin" {% if page == 'admin' %}aria-current="page"{% endif %}>Operations</a>{% endif %}
     </nav>
-    <span class="who">{{ email }}{% if role == 'admin' %} · admin{% endif %}</span>
+    <div class="side-foot">
+      <div class="who"><b>{{ email }}</b>{{ 'Admin' if role == 'admin' else 'Member' }}</div>
+      <p class="byline">A project by <a href="https://github.com/xParadox0/saku-assistant" rel="noopener">Yona Surya</a></p>
+    </div>
     {% endif %}
-  </header>
+  </aside>
+  </div>
   <main>
     {% block content %}{% endblock %}
+    <footer class="page-foot">Read-only on money. Every figure comes from your imported data. Not financial advice.</footer>
   </main>
-  <footer>Read-only on money. Every figure comes from your imported data. Not financial advice.</footer>
+</div>
 </body>
 </html>

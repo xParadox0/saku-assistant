@@ -30,7 +30,7 @@ from fastapi.templating import Jinja2Templates
 
 from .. import parsers
 from ..db import connect, init_schema
-from ..format import rupiah
+from ..format import rupiah, rupiah_short, signed_rupiah
 from ..repo import ACCOUNT_KINDS, Repo
 from .auth import AuthError, CloudflareAccessAuth, DevAuth, Identity
 
@@ -51,18 +51,19 @@ class NotFound(Exception):
 
 
 def _chart(series: list[dict]) -> dict:
-    w, h, pad, base = 640, 210, 28, 180
+    w, h, pad, base = 720, 250, 24, 214
     top = max([max(s["income"], s["spending"]) for s in series] + [Decimal(1)])
     slot = (w - 2 * pad) / max(len(series), 1)
     bw = slot * 0.3
     bars = []
     for i, s in enumerate(series):
         x = pad + i * slot + slot * 0.17
-        hi = float(s["income"] / top) * (base - 16)
-        ho = float(s["spending"] / top) * (base - 16)
+        hi = float(s["income"] / top) * (base - 34)
+        ho = float(s["spending"] / top) * (base - 34)
         bars.append({"x_in": round(x, 1), "x_out": round(x + bw + 3, 1), "w": round(bw, 1),
                      "y_in": round(base - hi, 1), "h_in": round(hi, 1), "y_out": round(base - ho, 1), "h_out": round(ho, 1),
-                     "lx": round(x + bw + 1.5, 1), "label": s["start"].strftime("%b %y"),
+                     "lx": round(x + bw + 1.5, 1), "label": s["start"].strftime("%b %Y"),
+                     "v_in": rupiah_short(s["income"]), "v_out": rupiah_short(s["spending"]),
                      "title": f"{s['start']:%B %Y}: in {rupiah(s['income'])}, out {rupiah(s['spending'])}"})
     return {"w": w, "h": h, "base": base, "bars": bars}
 
@@ -72,6 +73,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     app = FastAPI(title="Saku", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["rupiah"] = rupiah
+    templates.env.filters["signed_rupiah"] = signed_rupiah
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     key = secret.encode()
     upload_root = upload_root or tempfile.gettempdir()
@@ -141,8 +143,10 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             ctx = {"page": "overview", "month": month, "accounts": repo.account_stats(t)}
             if month:
                 series = repo.monthly_series(t, month, 6)
-                ctx.update(cf=series[-1], prev=series[-2] if len(series) > 1 else None, series=series,
-                           chart=_chart(series), recent=repo.recent_txns(t, 12))
+                cf = series[-1]
+                saved_pct = int((cf["net"] / cf["income"] * 100).to_integral_value()) if cf["income"] > 0 else None
+                ctx.update(cf=cf, prev=series[-2] if len(series) > 1 else None, series=series, saved_pct=saved_pct,
+                           chart=_chart(series), recent=repo.recent_txns(t, 10))
             return render(request, "overview.html", ident, member, **ctx)
 
     @app.get("/accounts", response_class=HTMLResponse)
@@ -193,8 +197,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                 raise NotFound("Account not found.")
         return RedirectResponse(f"/accounts?notice={outcome}", status_code=303)
 
-    @app.post("/accounts/{account_id}/import")
-    async def upload(request: Request, account_id: int, csrf: str = Form(""), file: UploadFile = File(...)):
+    async def _import(request: Request, account_id: int, csrf: str, file: UploadFile):
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -227,6 +230,14 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
         return RedirectResponse(f"/accounts?batch={batch_id}", status_code=303)
+
+    @app.post("/accounts/{account_id}/import")
+    async def upload(request: Request, account_id: int, csrf: str = Form(""), file: UploadFile = File(...)):
+        return await _import(request, account_id, csrf, file)
+
+    @app.post("/imports")
+    async def upload_picked(request: Request, csrf: str = Form(""), account_id: int = Form(...), file: UploadFile = File(...)):
+        return await _import(request, account_id, csrf, file)
 
     @app.get("/accounts/template.csv")
     def template_csv(request: Request):

@@ -261,3 +261,21 @@ def test_cloudflare_mode_requires_secret(db_url, monkeypatch):
     monkeypatch.setenv("SAKU_SECRET", "short")
     with pytest.raises(SystemExit):
         app_from_env()
+
+
+
+def test_upload_via_picker_route(client, seeded):
+    """POST /imports takes the account from the form; tenant and CSRF checks still apply."""
+    body = b"date,amount,description\n2026-09-10,1000,PICKER TEST\n"
+    alice = "alice@example.com"
+    r = client.post("/imports", data={"csrf": "wrong", "account_id": str(seeded["alice_acc"])},
+                    files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
+    assert r.status_code == 403
+    tok = csrf(client, alice)
+    r = client.post("/imports", data={"csrf": tok, "account_id": str(seeded["bob_acc"])},
+                    files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
+    assert r.status_code == 404
+    r = client.post("/imports", data={"csrf": tok, "account_id": str(seeded["alice_acc"])},
+                    files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
+    assert r.status_code == 303
+    assert "PICKER TEST" in client.get("/", headers=as_(alice)).text

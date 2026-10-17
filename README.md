@@ -48,6 +48,10 @@ own transfers paired: 15
 July 2026: income Rp19.500.000, spending Rp2.810.990, surplus Rp16.689.010 (10 own-transfer rows excluded)
 ```
 
+## Design
+
+Server-rendered HTML, no JavaScript, two self-hosted typefaces (Space Grotesk and Inter, both SIL OFL, licence files in `saku/web/static/fonts/`). Flat near-black surfaces separated by tone, one cyan accent for income and the primary action, neutral grey for spending, red only for a deficit or a failed import. The stylesheet passes the [taste-skill](https://github.com/Leonxlnx/taste-skill) lint with no failures. Public dashboard shots for reference were studied for layout principles only; no third-party asset is used.
+
 ## Run the dashboard
 
 ```bash

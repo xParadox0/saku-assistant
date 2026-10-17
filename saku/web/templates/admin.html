@@ -1,35 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Ops · Saku{% endblock %}
+{% block title %}Operations · Saku{% endblock %}
 {% block content %}
-<h1>Operations</h1>
-<p class="sub">Counts, statuses and timestamps for every tenant. Transactions, descriptions and amounts of other tenants are never shown here.</p>
+<header class="page-head">
+  <h1>Operations</h1>
+  <p class="lede">Counts, statuses and timestamps for every tenant. Other people's transactions, descriptions and amounts never appear here.</p>
+</header>
 
-<section class="panel">
-  <h2>Tenants</h2>
-  <table>
-    <thead><tr><th>Tenant</th><th class="num">Members</th><th class="num">Accounts</th><th class="num">Transactions</th><th>Last import</th><th class="num">Failed imports, 7 days</th></tr></thead>
-    <tbody>
-    {% for t in tenants %}
-      <tr><td>{{ t.tenant }}</td><td class="num">{{ t.members }}</td><td class="num">{{ t.accounts }}</td><td class="num">{{ t.transactions }}</td>
-          <td>{{ t.last_import_at.strftime('%d %b %Y %H:%M') if t.last_import_at else '-' }}</td>
-          <td class="num {{ 'out' if t.failed_imports_7d else '' }}">{{ t.failed_imports_7d }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</section>
-
-<section class="panel">
+<section class="panel tight">
   <h2>Component heartbeats</h2>
   {% if not heartbeats %}
     <p class="notice bad">No component has reported yet. The bot and scheduler start writing heartbeats in Stage 1 and 2.
-      An empty list here means nothing is running, not that everything is fine.</p>
+      An empty list means nothing is running, not that everything is fine.</p>
   {% else %}
   <table>
-    <thead><tr><th>Tenant</th><th>Component</th><th>Last OK</th><th>State</th><th>Last error</th></tr></thead>
+    <thead><tr><th>Component</th><th>Tenant</th><th>Last OK</th><th>State</th><th class="hide-sm">Last error</th></tr></thead>
     <tbody>
     {% for h in heartbeats %}
-      <tr><td>{{ h.tenant }}</td><td>{{ h.component }}</td><td>{{ h.last_ok.strftime('%d %b %H:%M') if h.last_ok else 'never' }}</td>
-          <td><span class="tag {{ 'bad' if h.stale else '' }}">{{ 'stale' if h.stale else 'ok' }}</span></td><td>{{ h.last_error or '' }}</td></tr>
+      <tr><td class="strong">{{ h.component }}</td><td>{{ h.tenant }}</td>
+          <td class="nowrap">{{ h.last_ok.strftime('%d %b, %H:%M') if h.last_ok else 'never' }}</td>
+          <td><span class="tag {{ 'bad' if h.stale else 'good' }}">{{ 'stale' if h.stale else 'ok' }}</span></td>
+          <td class="hide-sm note">{{ h.last_error or '' }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -37,14 +27,30 @@
 </section>
 
 <section class="panel">
+  <h2>Tenants</h2>
+  <table>
+    <thead><tr><th>Tenant</th><th class="num">Members</th><th class="num">Accounts</th><th class="num">Transactions</th><th class="hide-sm">Last import</th><th class="num">Failed, 7 days</th></tr></thead>
+    <tbody>
+    {% for t in tenants %}
+      <tr><td class="strong">{{ t.tenant }}</td><td class="num">{{ t.members }}</td><td class="num">{{ t.accounts }}</td><td class="num">{{ t.transactions }}</td>
+          <td class="hide-sm nowrap">{{ t.last_import_at.strftime('%d %b %Y, %H:%M') if t.last_import_at else '-' }}</td>
+          <td class="num {{ 'neg' if t.failed_imports_7d else '' }}">{{ t.failed_imports_7d }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
   <h2>Recent imports, all tenants</h2>
   <table>
-    <thead><tr><th>When</th><th>Tenant</th><th>Source</th><th>Parser</th><th>Status</th><th class="num">Read</th><th class="num">New</th><th class="num">Duplicate</th><th>Error</th></tr></thead>
+    <thead><tr><th>When</th><th>Tenant</th><th>Status</th><th class="num">Read</th><th class="num">New</th><th class="num">Duplicate</th><th class="hide-sm">Detail</th></tr></thead>
     <tbody>
     {% for b in batches %}
-      <tr><td>{{ b.created_at.strftime('%d %b %H:%M') }}</td><td>{{ b.tenant }}</td><td>{{ b.source }}</td><td>{{ b.parser or '-' }}</td>
-          <td><span class="tag {{ 'bad' if b.status == 'failed' else '' }}">{{ b.status }}</span></td>
-          <td class="num">{{ b.rows_in }}</td><td class="num">{{ b.rows_new }}</td><td class="num">{{ b.rows_dup }}</td><td>{{ b.error or '' }}</td></tr>
+      <tr><td class="nowrap">{{ b.created_at.strftime('%d %b, %H:%M') }}</td>
+          <td><span class="strong">{{ b.tenant }}</span><span class="sub-line">{{ b.source }}{% if b.parser %} · {{ b.parser }}{% endif %}</span></td>
+          <td><span class="tag {{ 'bad' if b.status == 'failed' else 'good' }}">{{ b.status }}</span></td>
+          <td class="num">{{ b.rows_in }}</td><td class="num">{{ b.rows_new }}</td><td class="num">{{ b.rows_dup }}</td>
+          <td class="hide-sm note">{{ b.error or '' }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
