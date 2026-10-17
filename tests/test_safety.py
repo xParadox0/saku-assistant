@@ -60,6 +60,6 @@ def test_cannot_import_into_another_tenants_account(repo):
 
 
 def test_sql_only_in_repo_layer():
-    offenders = [p.name for p in (ROOT / "saku").glob("*.py")
+    offenders = [str(p.relative_to(ROOT)) for p in (ROOT / "saku").rglob("*.py")
                  if p.name not in {"repo.py", "db.py"} and ".execute(" in p.read_text()]
     assert offenders == []

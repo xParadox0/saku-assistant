@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Saku{% endblock %}
+{% block content %}
+<h1>Accounts</h1>
+<p class="sub">Saku never asks for internet-banking logins. You add an account by name and upload its statement.</p>
+
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if result %}
+  <section class="notice {{ 'bad' if result.status == 'failed' else 'good' }}">
+    {% if result.status == 'failed' %}
+      <strong>Import failed for {{ result.account }}.</strong> {{ result.error }}. Nothing was imported.
+    {% else %}
+      <strong>{{ result.account }}:</strong> {{ result.rows_in }} rows read, {{ result.rows_new }} new, {{ result.rows_dup }} already imported.
+      The file was deleted after reading.
+    {% endif %}
+  </section>
+{% endif %}
+
+<section class="panel">
+  <h2>Your accounts</h2>
+  {% if not accounts %}<p>No accounts yet.</p>{% else %}
+  <table>
+    <thead><tr><th>Account</th><th>Type</th><th class="num">Transactions</th><th>Latest date</th><th>Last import</th><th>Upload statement</th><th>Manage</th></tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      <tr>
+        <td><strong>{{ a.label }}</strong><br><span class="hint">{{ a.provider }}{% if a.last4 %} ···{{ a.last4 }}{% endif %}</span></td>
+        <td>{{ a.kind }}</td>
+        <td class="num">{{ a.transactions }}</td>
+        <td>{{ a.last_booked.strftime('%d %b %Y') if a.last_booked else '-' }}</td>
+        <td>{% if a.last_import_status %}<span class="tag {{ 'bad' if a.last_import_status == 'failed' else '' }}">{{ a.last_import_status }}</span>{% else %}-{% endif %}</td>
+        <td>
+          <form method="post" action="/accounts/{{ a.id }}/import" enctype="multipart/form-data" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="file" name="file" accept=".csv,.pdf" required aria-label="Statement file for {{ a.label }}">
+            <button type="submit">Upload</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/accounts/{{ a.id }}/rename" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="text" name="label" value="{{ a.label }}" maxlength="60" required aria-label="New name for {{ a.label }}">
+            <button type="submit">Rename</button>
+          </form>
+          {% if a.transactions == 0 %}
+          <form method="post" action="/accounts/{{ a.id }}/delete" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="danger">Delete</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="hint">Accepted now: Saku CSV, up to {{ max_mb }} MB. Bank-specific PDF and CSV formats are added one by one.
+    <a href="/accounts/template.csv">Download the CSV template</a>.</p>
+</section>
+
+<section class="panel">
+  <h2>Add an account</h2>
+  <form method="post" action="/accounts" class="stack">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Type
+      <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select></label>
+    <label>Provider
+      <input name="provider" list="providers" required pattern="[a-z0-9_]{2,30}" placeholder="e.g. bca, gopay">
+      <datalist id="providers">{% for p in providers %}<option value="{{ p }}">{% endfor %}</datalist></label>
+    <label>Name shown in Saku
+      <input name="label" required maxlength="60" placeholder="e.g. Daily spending"></label>
+    <label>Last 4 digits (optional)
+      <input name="last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>
+    <button type="submit">Add account</button>
+  </form>
+  <p class="hint">Only the last 4 digits are stored. Never enter a full account number, password, PIN or OTP.</p>
+</section>
+{% endblock %}

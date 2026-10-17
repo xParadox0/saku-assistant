@@ -167,3 +167,146 @@ class Repo:
 
     def txn_count(self, tenant_id: str) -> int:
         return self.c.execute("SELECT COUNT(*) FROM txn WHERE tenant_id = %s", (tenant_id,)).fetchone()[0]
+
+    def ping(self) -> None:
+        self.c.execute("SELECT 1").fetchone()
+
+    # ---- identity ---------------------------------------------------------------------------------
+    # Cross-tenant by design: this is how a verified email finds its tenant. Nothing else may skip the filter.
+    def member(self, email: str) -> dict | None:
+        row = self.c.execute("SELECT tenant_id, role FROM member WHERE email = %s", (email.strip().lower(),)).fetchone()
+        return {"tenant_id": row[0], "role": row[1]} if row else None
+
+    def add_member(self, email: str, tenant_id: str, role: str = "user") -> None:
+        if role not in {"user", "admin"}:
+            raise ValueError("role must be user or admin")
+        self.ensure_tenant(tenant_id)
+        self.c.execute(
+            "INSERT INTO member (email, tenant_id, role) VALUES (%s, %s, %s) "
+            "ON CONFLICT (email) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, role = EXCLUDED.role",
+            (email.strip().lower(), tenant_id, role),
+        )
+
+    def tenant_ids(self) -> list[str]:
+        return [r[0] for r in self.c.execute("SELECT id FROM tenant ORDER BY id").fetchall()]
+
+    # ---- account management -----------------------------------------------------------------------
+    def rename_account(self, tenant_id: str, account_id: int, label: str) -> bool:
+        label = label.strip()
+        if not 1 <= len(label) <= 60:
+            raise ValueError("label must be 1 to 60 characters")
+        cur = self.c.execute("UPDATE account SET label = %s WHERE id = %s AND tenant_id = %s", (label, account_id, tenant_id))
+        return cur.rowcount == 1
+
+    def delete_account(self, tenant_id: str, account_id: int) -> str:
+        """'deleted', 'has_transactions' or 'not_found'. An account with history is never deleted silently."""
+        row = self.c.execute(
+            "SELECT (SELECT COUNT(*) FROM txn t WHERE t.account_id = a.id AND t.tenant_id = a.tenant_id) "
+            "FROM account a WHERE a.id = %s AND a.tenant_id = %s", (account_id, tenant_id),
+        ).fetchone()
+        if row is None:
+            return "not_found"
+        if row[0] > 0:
+            return "has_transactions"
+        with self.c.transaction():
+            self.c.execute("DELETE FROM import_batch WHERE account_id = %s AND tenant_id = %s", (account_id, tenant_id))
+            self.c.execute("DELETE FROM account WHERE id = %s AND tenant_id = %s", (account_id, tenant_id))
+        return "deleted"
+
+    def account_stats(self, tenant_id: str) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT a.id, a.kind, a.provider, a.label, a.last4, COUNT(t.id), MAX(t.booked_on),"
+            " (SELECT b.status FROM import_batch b WHERE b.account_id = a.id AND b.tenant_id = a.tenant_id ORDER BY b.id DESC LIMIT 1),"
+            " (SELECT b.created_at FROM import_batch b WHERE b.account_id = a.id AND b.tenant_id = a.tenant_id ORDER BY b.id DESC LIMIT 1) "
+            "FROM account a LEFT JOIN txn t ON t.account_id = a.id AND t.tenant_id = a.tenant_id "
+            "WHERE a.tenant_id = %s GROUP BY a.id ORDER BY a.id", (tenant_id,),
+        )
+        keys = ("id", "kind", "provider", "label", "last4", "transactions", "last_booked", "last_import_status", "last_import_at")
+        return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+    def record_failed_import(self, tenant_id: str, account_id: int, source: str, parser: str | None,
+                             file_sha256: str | None, error: str) -> int:
+        self._own_account(tenant_id, account_id)
+        return self.c.execute(
+            "INSERT INTO import_batch (tenant_id, account_id, source, file_sha256, parser, status, rows_in, rows_new, rows_dup, error) "
+            "VALUES (%s, %s, %s, %s, %s, 'failed', 0, 0, 0, %s) RETURNING id",
+            (tenant_id, account_id, source, file_sha256, parser, error[:500]),
+        ).fetchone()[0]
+
+    # ---- dashboard reads ----------------------------------------------------------------------------
+    def latest_month(self, tenant_id: str) -> date | None:
+        return self.c.execute(
+            "SELECT date_trunc('month', MAX(booked_on))::date FROM txn WHERE tenant_id = %s", (tenant_id,)
+        ).fetchone()[0]
+
+    def monthly_series(self, tenant_id: str, last_month: date, months: int = 6) -> list[dict]:
+        out = []
+        y, m = last_month.year, last_month.month
+        starts = []
+        for _ in range(months):
+            starts.append(date(y, m, 1))
+            y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+        for start in reversed(starts):
+            end = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+            out.append(self.cashflow(tenant_id, start, end))
+        while len(out) > 1 and out[0]["transactions"] == 0:  # no empty months before the first data
+            out.pop(0)
+        return out
+
+    def recent_txns(self, tenant_id: str, limit: int = 15) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT t.booked_on, a.label, t.description, t.amount, t.kind FROM txn t "
+            "JOIN account a ON a.id = t.account_id AND a.tenant_id = t.tenant_id "
+            "WHERE t.tenant_id = %s ORDER BY t.booked_on DESC, t.id DESC LIMIT %s", (tenant_id, limit),
+        )
+        return [dict(zip(("booked_on", "account", "description", "amount", "kind"), r)) for r in cur.fetchall()]
+
+    def import_batches(self, tenant_id: str, limit: int = 10) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT b.created_at, a.label, b.source, b.parser, b.status, b.rows_in, b.rows_new, b.rows_dup, b.error "
+            "FROM import_batch b LEFT JOIN account a ON a.id = b.account_id AND a.tenant_id = b.tenant_id "
+            "WHERE b.tenant_id = %s ORDER BY b.id DESC LIMIT %s", (tenant_id, limit),
+        )
+        keys = ("created_at", "account", "source", "parser", "status", "rows_in", "rows_new", "rows_dup", "error")
+        return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+    def import_batch(self, tenant_id: str, batch_id: int) -> dict | None:
+        rows = self.c.execute(
+            "SELECT b.created_at, a.label, b.source, b.parser, b.status, b.rows_in, b.rows_new, b.rows_dup, b.error "
+            "FROM import_batch b LEFT JOIN account a ON a.id = b.account_id AND a.tenant_id = b.tenant_id "
+            "WHERE b.tenant_id = %s AND b.id = %s", (tenant_id, batch_id),
+        ).fetchall()
+        keys = ("created_at", "account", "source", "parser", "status", "rows_in", "rows_new", "rows_dup", "error")
+        return dict(zip(keys, rows[0])) if rows else None
+
+    # ---- admin / ops ---------------------------------------------------------------------------------
+    # Cross-tenant on purpose, and limited to operational metadata: counts, statuses, timestamps.
+    # No admin method returns descriptions, amounts or account labels of another tenant.
+    def admin_tenants(self) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT t.id,"
+            " (SELECT COUNT(*) FROM member m WHERE m.tenant_id = t.id),"
+            " (SELECT COUNT(*) FROM account a WHERE a.tenant_id = t.id),"
+            " (SELECT COUNT(*) FROM txn x WHERE x.tenant_id = t.id),"
+            " (SELECT MAX(b.created_at) FROM import_batch b WHERE b.tenant_id = t.id),"
+            " (SELECT COUNT(*) FROM import_batch b WHERE b.tenant_id = t.id AND b.status = 'failed'"
+            "   AND b.created_at > now() - interval '7 days') "
+            "FROM tenant t ORDER BY t.id"
+        )
+        keys = ("tenant", "members", "accounts", "transactions", "last_import_at", "failed_imports_7d")
+        return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+    def admin_heartbeats(self) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT tenant_id, component, last_ok, last_error, (last_ok IS NULL OR last_ok < now() - interval '24 hours') "
+            "FROM heartbeat ORDER BY tenant_id, component"
+        )
+        return [dict(zip(("tenant", "component", "last_ok", "last_error", "stale"), r)) for r in cur.fetchall()]
+
+    def admin_recent_batches(self, limit: int = 20) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT created_at, tenant_id, source, parser, status, rows_in, rows_new, rows_dup, error "
+            "FROM import_batch ORDER BY id DESC LIMIT %s", (limit,),
+        )
+        keys = ("created_at", "tenant", "source", "parser", "status", "rows_in", "rows_new", "rows_dup", "error")
+        return [dict(zip(keys, r)) for r in cur.fetchall()]

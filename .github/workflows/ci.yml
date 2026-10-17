@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e . pytest
+      - run: pip install -e ".[dev]"
       - run: pytest -q
 
   compose-demo:
@@ -37,3 +37,11 @@ jobs:
           docker compose up --build --abort-on-container-exit --exit-code-from app | tee demo.log
           grep -q "own transfers paired: 15" demo.log
           grep -q "No real accounts are involved" demo.log
+      - name: dashboard on a clean machine
+        run: |
+          docker compose --profile dashboard up --build -d web
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8090/healthz && break; sleep 2; done
+          curl -sf http://127.0.0.1:8090/ | tee overview.html | grep -q "Rp15.862.010"
+          curl -sf http://127.0.0.1:8090/accounts | grep -q "Wallet (demo)"
+          curl -sf http://127.0.0.1:8090/admin | grep -q "No component has reported yet"
+          docker compose --profile dashboard down -v

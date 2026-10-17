@@ -109,3 +109,10 @@ CREATE TABLE IF NOT EXISTS heartbeat (
     last_error  TEXT,
     PRIMARY KEY (tenant_id, component)
 );
+
+CREATE TABLE IF NOT EXISTS member (
+    email       TEXT PRIMARY KEY CHECK (email = lower(email)), -- identity verified by Cloudflare Access, stored lowercase
+    tenant_id   TEXT NOT NULL REFERENCES tenant(id),
+    role        TEXT NOT NULL CHECK (role IN ('user', 'admin')), -- admin sees operational metadata of every tenant, never their transactions
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

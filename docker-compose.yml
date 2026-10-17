@@ -1,5 +1,8 @@
-# Local demo stack. The database port is not published to the host, and the
-# password below is a local-only demo value. Use a real secret in any other setup.
+# Local demo stack. The database port is not published, and the password below is a
+# local-only demo value. Use real secrets and Cloudflare Access for anything else.
+#
+#   docker compose up --build --abort-on-container-exit --exit-code-from app   CLI demo
+#   docker compose --profile dashboard up --build web                          dashboard on http://127.0.0.1:8090
 services:
   db:
     image: postgres:16-alpine
@@ -19,6 +22,22 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://saku:saku-demo-only@db:5432/saku
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    profiles: ["dashboard"]
+    build: .
+    command: ["python", "-m", "saku", "serve", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      DATABASE_URL: postgresql://saku:saku-demo-only@db:5432/saku
+      SAKU_AUTH_MODE: dev              # demo identity, synthetic data only
+      SAKU_DEV_EMAIL: demo@saku.local
+      SAKU_DEV_CONTAINER: "1"          # allows 0.0.0.0 inside the container; the host port below stays on loopback
+      SAKU_LOAD_DEMO: "1"
+    ports:
+      - "127.0.0.1:8090:8090"
     depends_on:
       db:
         condition: service_healthy

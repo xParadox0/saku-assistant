@@ -78,6 +78,8 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 - **F9 Recurring and fee detection.** Subscriptions, admin fees and transfer fees, with monthly cost.
 - **F10 Weekly and monthly review** delivered on Telegram.
 - **F11 Data export and delete.** User can export everything and delete everything (UU PDP rights).
+- **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Login through Cloudflare Access by email.
+- **F22 Ops page for the admin.** Per-tenant counts, last import, failed imports, component heartbeats. Never shows another tenant's transactions, descriptions, amounts or account names.
 
 ### Should
 - **F12 Email notification ingest.** Read-only access to a mail label where the user forwards bank notifications. Near real-time transactions.
@@ -93,7 +95,7 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 
 ### Won't (v1)
 - **F20** Real-time bank aggregation via a licensed aggregator. Revisited only with a business entity and partner agreement.
-- **F21** Web dashboard for end users. Telegram first.
+- **F23** Budgets, goals, wishlist and category rules managed from the dashboard. They stay in Telegram until the dashboard has proved itself.
 
 ## 6. Non-functional requirements
 
@@ -146,3 +148,5 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 - Own PostgreSQL container in the project's `docker compose`, so the demo runs with one command and the project does not depend on any private infrastructure.
 - Public repository under MIT license.
 - F15 income scope for v1: freelance and job openings only. Local side work is out of scope for now.
+- A web dashboard is part of v1 (F21, F22), for both the user's money picture and an admin ops view. The first management function is accounts and statement upload; budgets and categories follow later (F23).
+- The real-data dashboard is reachable only through Cloudflare Access with email login. The origin listens on 127.0.0.1 and has no open port.

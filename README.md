@@ -2,7 +2,7 @@
 
 A proactive personal finance assistant for people whose money is spread across several bank and e-wallet accounts.
 
-Saku is being built in public. This repository is at **Stage 0**: database schema, ledger logic, synthetic demo data and tests. There is no Telegram bot yet and no real data.
+Saku is being built in public. This repository is at **Stage 0b**: database schema, ledger logic, a web dashboard, synthetic demo data and tests. There is no Telegram bot yet and no real data.
 
 ## Why
 
@@ -48,6 +48,32 @@ own transfers paired: 15
 July 2026: income Rp19.500.000, spending Rp2.810.990, surplus Rp16.689.010 (10 own-transfer rows excluded)
 ```
 
+## Run the dashboard
+
+```bash
+docker compose --profile dashboard up --build web
+# open http://127.0.0.1:8090
+```
+
+Without Docker: `python tools/run_dashboard_local.py`.
+
+The demo dashboard signs you in as a fixed demo user with synthetic data, and only listens on 127.0.0.1. It has four pages:
+
+| Page | What it does |
+|---|---|
+| Overview | Latest month income, spending and surplus across all accounts, monthly trend, totals per account, recent transactions |
+| Accounts | Add, rename and delete accounts; upload a statement per account; download the CSV template |
+| Imports | Every upload with rows read, new and duplicate, including failed ones and why |
+| Ops | Admin only. Per-tenant counts, failed imports and component heartbeats, without any transaction content |
+
+For real data the dashboard runs behind Cloudflare Access. It verifies the signed Access token itself and maps the email to a tenant through the `member` table:
+
+```bash
+SAKU_AUTH_MODE=cloudflare SAKU_CF_TEAM=https://<team>.cloudflareaccess.com SAKU_CF_AUD=<aud-tag> \
+SAKU_SECRET=<32+ random chars> DATABASE_URL=... python -m saku serve --host 127.0.0.1
+python -m saku add-member you@example.com your-tenant admin
+```
+
 ## Tests
 
 ```bash
@@ -62,7 +88,9 @@ Tests use `TEST_DATABASE_URL` when set, otherwise a throwaway PostgreSQL started
 | Stage | Delivers | Status |
 |---|---|---|
 | 0 | Schema, ledger, own-transfer detection, demo data, tests | done |
-| 1 | Telegram bot, manual entry, statement import for two providers | next |
+| 0b | Dashboard: overview, accounts, upload, imports, ops page, Access JWT checks | done |
+| 0c | Dashboard deployed behind Cloudflare Access | next |
+| 1 | Telegram bot, manual entry, statement import for two providers | planned |
 | 2 | Categorisation, weekly review, heartbeats | planned |
 | 3 | Purchase check, 48-hour wishlist, budgets and goals | planned |
 

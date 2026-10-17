@@ -220,9 +220,43 @@ CREATE TABLE heartbeat (
     last_error  TEXT,
     PRIMARY KEY (tenant_id, component)
 );
+
+CREATE TABLE member (
+    email       TEXT PRIMARY KEY,                -- verified by Cloudflare Access, stored lowercase
+    tenant_id   TEXT NOT NULL REFERENCES tenant(id),
+    role        TEXT NOT NULL                    -- user | admin; admin sees ops metadata, never other tenants' rows
+);
 ```
 
 Every repository function takes `tenant_id` as its first argument and puts it in the `WHERE` clause. Raw SQL outside the repository layer fails code review.
+
+### 3.9 Dashboard (F21, F22)
+
+Server-rendered pages (FastAPI + Jinja2), no JavaScript. The page Content-Security-Policy sets `script-src 'none'`, so an injected script cannot run even if escaping ever failed.
+
+```text
+/              overview: latest month income, spending, surplus/deficit, trend, by account, recent rows
+/accounts      list, add, rename, delete (only when empty), upload a statement per account
+/imports       every import batch, including failures and their error text
+/admin         ops view, admin role only: tenants, heartbeats, recent batches (metadata only)
+/healthz       liveness, no data
+```
+
+Identity and access:
+
+```text
+Browser ──▶ Cloudflare Access (email login) ──▶ Cloudflare Tunnel ──▶ 127.0.0.1:8090 (dashboard)
+```
+
+- Identity comes only from the `Cf-Access-Jwt-Assertion` JWT. The dashboard verifies its RS256 signature against the team's published keys, plus `aud`, `iss` and `exp`. The unsigned `Cf-Access-Authenticated-User-Email` header is ignored, and a test checks that it alone gets a 401.
+- The verified email is looked up in the `member` table, which maps it to one tenant and a role (`user` or `admin`). An email that passed Access but is not a member gets 403. Access decides who may reach the site; `member` decides what they see.
+- Every POST carries an HMAC token bound to the user's email. A token from another user is rejected.
+- Uploads: 5 MB limit, written to a private temp directory, parsed, then the directory is deleted. Only the SHA-256 of the file is stored. A failed parse is recorded as a failed batch with a message that never contains row contents.
+- The admin page uses separate repository methods that return counts, statuses and timestamps only. A test asserts that descriptions, amounts and account labels of other tenants never appear on it.
+- An empty heartbeat list is shown as a warning. Nothing reporting is not the same as everything fine (principle 3).
+- Dev mode (fixed demo identity) refuses to start on a non-loopback address, except inside the demo container whose host port is bound to loopback.
+
+The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so any account can be imported before its bank-specific parser exists. Bank-specific PDF and CSV parsers are added in Stage 1.
 
 ## 4. Main flows
 
@@ -257,7 +291,7 @@ See 3.5. The 48-hour follow-up is a scheduler job keyed on `wishlist.remind_at`.
 ## 6. Deliberately not designed yet
 
 - Registration, billing, roles and quotas.
-- End-user web dashboard (F21).
+- Budgets, goals, wishlist and category management in the dashboard (F23).
 - Licensed aggregator integration (F20).
 - Multi-currency rates (F19).
 - Anything that writes to a bank, wallet or payment provider. Never planned.
@@ -269,6 +303,11 @@ Every stage is useful on its own. Each line also says what it does not deliver.
 ```text
 Stage 0  Repo, docker compose, schema, synthetic demo data, tests
          no bot, no real data
+Stage 0b Dashboard: overview, accounts, statement upload (Saku CSV), import history, ops page,
+         Cloudflare Access JWT verification, demo container on loopback
+         no public hostname yet, no bank-specific parsers
+Stage 0c Deploy the dashboard behind Cloudflare Access on a subdomain, origin on 127.0.0.1
+         needs owner approval for the tunnel route and the Access policy; no real data until Stage 1
 Stage 1  Telegram bot + manual entry + CSV/PDF import for the 2 sources that prove
          easiest in the source matrix + cash-flow summary
          -> measures the PRD "Now" baseline and fills the source matrix
@@ -290,6 +329,12 @@ Stage 7  Multi-user readiness review: PSE, UU PDP, OJK boundary, security review
 ```text
 Stage 0  docker compose up on a clean machine; demo seed loads; tests pass;
          information_schema.columns has no column matching password|pin|otp
+Stage 0b a forged or unsigned identity gets 401; a non-member gets 403; a user cannot rename,
+         delete or upload into another tenant's account; a POST without or with someone else's
+         CSRF token gets 403; the ops page contains no other tenant's descriptions or amounts;
+         the upload temp directory is empty after every upload
+Stage 0c from a browser without an Access session the subdomain shows the Access login, not the
+         page; nothing answers on the origin host's LAN or public interfaces
 Stage 1  import a real statement; rows_in = rows_new + rows_dup; re-import the same file
          -> 0 new rows; temp directory is empty afterwards
 Stage 2  correct the same merchant twice -> a learned rule appears; stop the scheduler

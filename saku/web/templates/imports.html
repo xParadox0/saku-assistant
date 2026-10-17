@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Imports · Saku{% endblock %}
+{% block content %}
+<h1>Import history</h1>
+<p class="sub">Every upload is listed, including the ones that failed. Files themselves are deleted after reading; only a fingerprint is kept.</p>
+<section class="panel">
+  {% if not batches %}<p>No imports yet.</p>{% else %}
+  <table>
+    <thead><tr><th>When</th><th>Account</th><th>Source</th><th>Parser</th><th>Status</th><th class="num">Read</th><th class="num">New</th><th class="num">Duplicate</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for b in batches %}
+      <tr><td>{{ b.created_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ b.account or '-' }}</td><td>{{ b.source }}</td>
+          <td>{{ b.parser or '-' }}</td><td><span class="tag {{ 'bad' if b.status == 'failed' else '' }}">{{ b.status }}</span></td>
+          <td class="num">{{ b.rows_in if b.rows_in is not none else '-' }}</td><td class="num">{{ b.rows_new if b.rows_new is not none else '-' }}</td>
+          <td class="num">{{ b.rows_dup if b.rows_dup is not none else '-' }}</td><td>{{ b.error or '' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

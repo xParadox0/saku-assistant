@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+{% if not month %}
+  <section class="empty">
+    <h1>No transactions yet</h1>
+    <p>Add an account and upload a statement to see your monthly picture.</p>
+    <p><a class="button" href="/accounts">Go to accounts</a></p>
+  </section>
+{% else %}
+  <h1>{{ cf.start.strftime('%B %Y') }}</h1>
+  <p class="sub">Latest month with data, across {{ accounts|length }} accounts. Transfers between your own accounts are left out.</p>
+
+  <section class="cards">
+    <div class="card"><span class="label">Income</span><span class="value in">{{ cf.income|rupiah }}</span>
+      {% if prev %}<span class="hint">previous month {{ prev.income|rupiah }}</span>{% endif %}</div>
+    <div class="card"><span class="label">Spending</span><span class="value out">{{ cf.spending|rupiah }}</span>
+      {% if prev %}<span class="hint">previous month {{ prev.spending|rupiah }}</span>{% endif %}</div>
+    <div class="card"><span class="label">{{ 'Surplus' if cf.net >= 0 else 'Deficit' }}</span>
+      <span class="value {{ 'in' if cf.net >= 0 else 'out' }}">{{ cf.net|rupiah }}</span>
+      <span class="hint">{{ cf.transactions }} transactions, {{ cf.own_transfer_rows_excluded }} own-transfer rows excluded</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Monthly trend</h2>
+    <svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="Income and spending per month">
+      <line x1="20" y1="{{ chart.base }}" x2="{{ chart.w - 20 }}" y2="{{ chart.base }}" class="axis"/>
+      {% for b in chart.bars %}
+      <g><title>{{ b.title }}</title>
+        <rect class="bar-in" x="{{ b.x_in }}" y="{{ b.y_in }}" width="{{ b.w }}" height="{{ b.h_in }}"/>
+        <rect class="bar-out" x="{{ b.x_out }}" y="{{ b.y_out }}" width="{{ b.w }}" height="{{ b.h_out }}"/>
+        <text x="{{ b.lx }}" y="{{ chart.base + 18 }}" text-anchor="middle">{{ b.label }}</text>
+      </g>
+      {% endfor %}
+    </svg>
+    <p class="legend"><span class="dot in"></span>Income <span class="dot out"></span>Spending</p>
+    <table>
+      <thead><tr><th>Month</th><th class="num">Income</th><th class="num">Spending</th><th class="num">Net</th></tr></thead>
+      <tbody>
+      {% for s in series %}
+        <tr><td>{{ s.start.strftime('%B %Y') }}</td><td class="num">{{ s.income|rupiah }}</td>
+            <td class="num">{{ s.spending|rupiah }}</td><td class="num {{ 'in' if s.net >= 0 else 'out' }}">{{ s.net|rupiah }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="grid2">
+    <div class="panel">
+      <h2>By account, {{ cf.start.strftime('%B') }}</h2>
+      <table>
+        <thead><tr><th>Account</th><th class="num">In</th><th class="num">Out</th><th class="num">Rows</th></tr></thead>
+        <tbody>
+        {% for a in cf.by_account %}
+          <tr><td>{{ a.label }}</td><td class="num">{{ a.money_in|rupiah }}</td><td class="num">{{ a.money_out|rupiah }}</td><td class="num">{{ a.transactions }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Recent transactions</h2>
+      <table>
+        <thead><tr><th>Date</th><th>Account</th><th>Description</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+        {% for t in recent %}
+          <tr class="{{ 'muted' if t.kind == 'own_transfer' else '' }}">
+            <td class="nowrap">{{ t.booked_on.strftime('%d %b') }}</td><td>{{ t.account }}</td>
+            <td>{{ t.description }}{% if t.kind != 'normal' %} <span class="tag">{{ t.kind.replace('_', ' ') }}</span>{% endif %}</td>
+            <td class="num {{ 'in' if t.amount > 0 else 'out' }}">{{ t.amount|rupiah }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Saku{% endblock %}</title>
+  <link rel="stylesheet" href="/static/saku.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Saku</a>
+    {% if email %}
+    <nav>
+      <a href="/" {% if page == 'overview' %}aria-current="page"{% endif %}>Overview</a>
+      <a href="/accounts" {% if page == 'accounts' %}aria-current="page"{% endif %}>Accounts</a>
+      <a href="/imports" {% if page == 'imports' %}aria-current="page"{% endif %}>Imports</a>
+      {% if role == 'admin' %}<a href="/admin" {% if page == 'admin' %}aria-current="page"{% endif %}>Ops</a>{% endif %}
+    </nav>
+    <span class="who">{{ email }}{% if role == 'admin' %} · admin{% endif %}</span>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>Read-only on money. Every figure comes from your imported data. Not financial advice.</footer>
+</body>
+</html>
