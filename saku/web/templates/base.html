@@ -25,6 +25,7 @@
       <a href="/" {% if page == 'overview' %}aria-current="page"{% endif %}>{{ icon('i-home') }}<span>Overview</span></a>
       <a href="/accounts" {% if page == 'accounts' %}aria-current="page"{% endif %}>{{ icon('i-wallet') }}<span>Accounts</span></a>
       <a href="/imports" {% if page == 'imports' %}aria-current="page"{% endif %}>{{ icon('i-file') }}<span>Imports</span></a>
+      <a href="/settings" {% if page == 'settings' %}aria-current="page"{% endif %}>{{ icon('i-phone') }}<span>Settings</span></a>
       {% if role == 'admin' %}<a href="/admin" {% if page == 'admin' %}aria-current="page"{% endif %}>{{ icon('i-pulse') }}<span>Ops</span></a>{% endif %}
     </nav>
     <div class="side-foot">

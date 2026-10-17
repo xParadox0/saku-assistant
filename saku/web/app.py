@@ -84,7 +84,10 @@ def _donut(cats: list[dict], total: Decimal) -> list[dict]:
 
 
 def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, secret: str,
-               upload_root: str | None = None) -> FastAPI:
+               upload_root: str | None = None, bot_username: str | None = None) -> FastAPI:
+    bot_username = (bot_username or "").lstrip("@") or None
+    if bot_username and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username):
+        raise SystemExit("SAKU_BOT_USERNAME is not a valid Telegram username")
     app = FastAPI(title="Saku", docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=str(HERE / "templates"))
     templates.env.filters["rupiah"] = rupiah
@@ -284,6 +287,38 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             return render(request, "imports.html", ident, member, page="imports",
                           batches=repo.import_batches(member["tenant_id"], 50))
 
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings(request: Request, notice: str | None = None):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            notices = {"unlinked": "Telegram disconnected. The bot no longer reads messages from that account."}
+            return render(request, "settings.html", ident, member, page="settings",
+                          telegram=repo.telegram_status(ident.email), notice=notices.get(notice or ""),
+                          bot_username=bot_username, link=None)
+
+    @app.post("/settings/telegram/code", response_class=HTMLResponse)
+    def telegram_code(request: Request, csrf: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            if not bot_username:
+                raise Forbidden("The Telegram bot is not configured on this server yet.")
+            code = repo.create_link_code(ident.email)
+            link = {"url": f"https://t.me/{bot_username}?start={code}", "code": code,
+                    "minutes": Repo.LINK_TTL_MINUTES}
+            return render(request, "settings.html", ident, member, page="settings",
+                          telegram=repo.telegram_status(ident.email), notice=None,
+                          bot_username=bot_username, link=link)
+
+    @app.post("/settings/telegram/unlink")
+    def telegram_unlink(request: Request, csrf: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            repo.unlink_telegram(email=ident.email)
+        return RedirectResponse("/settings?notice=unlinked", status_code=303)
+
+
     @app.get("/admin", response_class=HTMLResponse)
     def admin(request: Request):
         with repo_ctx() as repo:
@@ -311,6 +346,7 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
     SAKU_CF_AUD      Access application AUD tag                  (cloudflare mode)
     SAKU_SECRET      random string for CSRF tokens               (required in cloudflare mode)
     SAKU_DEV_EMAIL   identity used in dev mode
+    SAKU_BOT_USERNAME  Telegram bot username for the Connect Telegram link (optional)
     """
     url = os.environ.get("DATABASE_URL")
     if not url:
@@ -330,4 +366,4 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
             raise SystemExit("SAKU_SECRET must be at least 32 characters in cloudflare mode")
     else:
         raise SystemExit(f"unknown SAKU_AUTH_MODE {mode!r}")
-    return create_app(lambda: connect(url), auth, secret)
+    return create_app(lambda: connect(url), auth, secret, bot_username=os.environ.get("SAKU_BOT_USERNAME"))

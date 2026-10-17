@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Settings · Saku{% endblock %}
+{% block content %}
+<header class="hello rise">
+  <div>
+    <h1>Settings</h1>
+    <p class="lede">Your Saku account is the email you signed in with. Connect Telegram to talk to Saku from your phone.</p>
+  </div>
+</header>
+
+{% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
+
+<section class="card rise d1">
+  <div class="drop">
+    <span class="drop-ic">{{ icon('i-phone') }}</span>
+    <div>
+      <h2>Telegram</h2>
+      {% if telegram %}
+        <p class="lede small">Connected since {{ telegram.linked_at.strftime('%-d %B %Y, %H:%M') }}. The bot answers only this Telegram account.</p>
+      {% else %}
+        <p class="lede small">Not connected. Until you connect, the bot refuses every message and saves nothing.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if link %}
+    <div class="link-box">
+      <p><b>Step 1.</b> Open this link on the phone that has Telegram. It works once and expires in {{ link.minutes }} minutes.</p>
+      <a class="button" href="{{ link.url }}" rel="noopener">{{ icon('i-phone') }}Open @{{ bot_username }} in Telegram</a>
+      <p><b>Step 2.</b> Press <b>Start</b> in Telegram. The bot replies with the email it connected to.</p>
+      <p class="hint">On a computer without Telegram, send this to @{{ bot_username }} instead: <code>/start {{ link.code }}</code></p>
+    </div>
+  {% endif %}
+
+  <div class="actions-row">
+    {% if bot_username %}
+    <form method="post" action="/settings/telegram/code">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" {% if telegram %}class="quiet"{% endif %}>{{ icon('i-plus') }}{{ 'Connect a different Telegram account' if telegram else 'Connect Telegram' }}</button>
+    </form>
+    {% else %}
+    <p class="notice bad">{{ icon('i-alert') }}<span>The bot is not configured on this server yet (SAKU_BOT_USERNAME).</span></p>
+    {% endif %}
+    {% if telegram %}
+    <form method="post" action="/settings/telegram/unlink">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="danger">{{ icon('i-x') }}Disconnect</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card rise d2">
+  <div class="drop">
+    <span class="drop-ic">{{ icon('i-shield') }}</span>
+    <div>
+      <h2>How the connection is protected</h2>
+      <ul class="plain">
+        <li>The link carries a one-time code that expires in 10 minutes. Only a fingerprint of the code is stored.</li>
+        <li>Saku stores your numeric Telegram ID, not your phone number or username.</li>
+        <li>One Telegram account per Saku account. Connecting a new one disconnects the old one.</li>
+        <li>You can disconnect here or by sending /unlink to the bot.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+{% endblock %}

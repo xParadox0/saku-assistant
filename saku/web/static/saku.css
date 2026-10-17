@@ -356,3 +356,13 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
   .banner { padding: 22px 18px; }
   .welcome.with-photo::after { width: 100%; opacity: .12; }
 }
+
+/* ---- settings ---------------------------------------------------------------------------------------- */
+.card + .card { margin-top: 16px; }
+.link-box { display: grid; gap: 12px; justify-items: start; background: var(--surface-2); border-radius: var(--r-md); padding: 18px; margin-top: 18px; }
+.link-box p { margin: 0; color: var(--muted); }
+.link-box b { color: var(--ink); }
+code { font-family: var(--text); background: var(--surface-3); color: var(--ink); padding: 2px 8px; border-radius: 6px; overflow-wrap: anywhere; }
+.actions-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
+.actions-row .notice { margin: 0; }
+ul.plain { margin: 8px 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }

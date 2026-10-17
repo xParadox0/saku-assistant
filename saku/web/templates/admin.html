@@ -29,10 +29,10 @@
 <section class="panel">
   <h2>Tenants</h2>
   <table>
-    <thead><tr><th>Tenant</th><th class="num">Members</th><th class="num">Accounts</th><th class="num">Transactions</th><th class="hide-sm">Last import</th><th class="num">Failed, 7 days</th></tr></thead>
+    <thead><tr><th>Tenant</th><th class="num">Members</th><th class="num">Telegram</th><th class="num">Accounts</th><th class="num">Transactions</th><th class="hide-sm">Last import</th><th class="num">Failed, 7 days</th></tr></thead>
     <tbody>
     {% for t in tenants %}
-      <tr><td class="strong">{{ t.tenant }}</td><td class="num">{{ t.members }}</td><td class="num">{{ t.accounts }}</td><td class="num">{{ t.transactions }}</td>
+      <tr><td class="strong">{{ t.tenant }}</td><td class="num">{{ t.members }}</td><td class="num">{{ t.telegram_linked }}</td><td class="num">{{ t.accounts }}</td><td class="num">{{ t.transactions }}</td>
           <td class="hide-sm nowrap">{{ t.last_import_at.strftime('%d %b %Y, %H:%M') if t.last_import_at else '-' }}</td>
           <td class="num {{ 'neg' if t.failed_imports_7d else '' }}">{{ t.failed_imports_7d }}</td></tr>
     {% endfor %}

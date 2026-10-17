@@ -42,8 +42,13 @@ Each principle can veto a later design choice.
 ### 3.1 Bot
 - Dedicated Telegram bot for this project. The token lives only in the deployment `.env` (mode 600) and is never committed.
 - Telegram Bot API, long polling (no public webhook needed in v1).
-- Maps a Telegram user id to one `tenant_id`. Unknown users get a fixed reply and nothing else.
-- Accepts text, PDF, CSV and photos. Files go to a temp directory, are parsed, then deleted.
+- Link-first. The web account (email verified by Cloudflare Access) is the root identity. The bot trusts a Telegram user only after the member redeems a one-time code from Settings > Connect Telegram, sent as a `t.me/<bot>?start=<code>` deep link.
+  - Codes: 144-bit random, single use, 10 minutes, stored only as SHA-256, a new code cancels older ones.
+  - `telegram_link` maps the numeric Telegram user id (never the username) to one member and tenant. One Telegram account per member; linking a new one replaces the old.
+  - A Telegram account already linked to another member cannot be taken over with a new code.
+  - Unlinked senders get fixed instructions; nothing they send is stored or logged. Group chats are refused.
+  - Unlink from the dashboard or with `/unlink`.
+- Accepts text, PDF, CSV and photos (Stage 1). Files go to a temp directory, are parsed, then deleted.
 
 ### 3.2 Importers (F2, F3, F12)
 One parser per source behind one interface:

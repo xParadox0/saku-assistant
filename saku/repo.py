@@ -233,6 +233,70 @@ class Repo:
             (tenant_id, account_id, source, file_sha256, parser, error[:500]),
         ).fetchone()[0]
 
+    # ---- Telegram linking -------------------------------------------------------------------------------
+    LINK_TTL_MINUTES = 10
+
+    def create_link_code(self, email: str) -> str:
+        """New one-time code for this member. Older unused codes of the same member stop working."""
+        import secrets
+        email = email.strip().lower()
+        if self.member(email) is None:
+            raise ValueError("unknown member")
+        code = secrets.token_urlsafe(18)  # 144 bits; fits Telegram's /start parameter (A-Z a-z 0-9 _ -, max 64)
+        with self.c.transaction():
+            self.c.execute("UPDATE link_code SET used_at = now() WHERE email = %s AND used_at IS NULL", (email,))
+            self.c.execute(
+                "INSERT INTO link_code (code_hash, email, expires_at) VALUES (%s, %s, now() + make_interval(mins => %s))",
+                (_sha(code), email, self.LINK_TTL_MINUTES))
+        return code
+
+    def redeem_link_code(self, code: str, telegram_user_id: int) -> tuple[str, str | None]:
+        """Returns (outcome, email). Outcomes: linked, relinked, invalid, taken.
+        invalid covers unknown, expired and already used codes alike, so a guesser learns nothing."""
+        if not code or len(code) > 64:
+            return "invalid", None
+        with self.c.transaction():
+            row = self.c.execute(
+                "SELECT email FROM link_code WHERE code_hash = %s AND used_at IS NULL AND expires_at > now() FOR UPDATE",
+                (_sha(code),)).fetchone()
+            if row is None:
+                return "invalid", None
+            email = row[0]
+            owner = self.c.execute("SELECT email FROM telegram_link WHERE telegram_user_id = %s",
+                                   (telegram_user_id,)).fetchone()
+            if owner and owner[0] != email:
+                return "taken", None  # this Telegram account belongs to another member; code stays usable
+            self.c.execute("UPDATE link_code SET used_at = now() WHERE code_hash = %s", (_sha(code),))
+            tenant = self.member(email)["tenant_id"]
+            replaced = self.c.execute("DELETE FROM telegram_link WHERE email = %s AND telegram_user_id <> %s",
+                                      (email, telegram_user_id)).rowcount
+            self.c.execute(
+                "INSERT INTO telegram_link (telegram_user_id, email, tenant_id) VALUES (%s, %s, %s) "
+                "ON CONFLICT (telegram_user_id) DO UPDATE SET linked_at = now()",
+                (telegram_user_id, email, tenant))
+        return ("relinked" if replaced else "linked"), email
+
+    def telegram_identity(self, telegram_user_id: int) -> dict | None:
+        """The only way the bot resolves a sender. None means: not linked, refuse and store nothing."""
+        row = self.c.execute(
+            "SELECT l.email, l.tenant_id, m.role FROM telegram_link l JOIN member m ON m.email = l.email "
+            "WHERE l.telegram_user_id = %s", (telegram_user_id,)).fetchone()
+        return {"email": row[0], "tenant_id": row[1], "role": row[2]} if row else None
+
+    def telegram_status(self, email: str) -> dict | None:
+        row = self.c.execute("SELECT telegram_user_id, linked_at FROM telegram_link WHERE email = %s",
+                             (email.strip().lower(),)).fetchone()
+        return {"telegram_user_id": row[0], "linked_at": row[1]} if row else None
+
+    def unlink_telegram(self, email: str | None = None, telegram_user_id: int | None = None) -> bool:
+        if email is not None:
+            n = self.c.execute("DELETE FROM telegram_link WHERE email = %s", (email.strip().lower(),)).rowcount
+        elif telegram_user_id is not None:
+            n = self.c.execute("DELETE FROM telegram_link WHERE telegram_user_id = %s", (telegram_user_id,)).rowcount
+        else:
+            raise ValueError("email or telegram_user_id required")
+        return n > 0
+
     # ---- categories and insights --------------------------------------------------------------------
     def apply_categories(self, tenant_id: str) -> int:
         """Label uncategorised rows. Kind first, then income, tenant rules, built-in rules, else 'other'.
@@ -346,6 +410,7 @@ class Repo:
         cur = self.c.execute(
             "SELECT t.id,"
             " (SELECT COUNT(*) FROM member m WHERE m.tenant_id = t.id),"
+            " (SELECT COUNT(*) FROM telegram_link l WHERE l.tenant_id = t.id),"
             " (SELECT COUNT(*) FROM account a WHERE a.tenant_id = t.id),"
             " (SELECT COUNT(*) FROM txn x WHERE x.tenant_id = t.id),"
             " (SELECT MAX(b.created_at) FROM import_batch b WHERE b.tenant_id = t.id),"
@@ -353,8 +418,21 @@ class Repo:
             "   AND b.created_at > now() - interval '7 days') "
             "FROM tenant t ORDER BY t.id"
         )
-        keys = ("tenant", "members", "accounts", "transactions", "last_import_at", "failed_imports_7d")
+        keys = ("tenant", "members", "telegram_linked", "accounts", "transactions", "last_import_at", "failed_imports_7d")
         return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+    def beat(self, tenant_id: str, component: str, error: str | None = None) -> None:
+        """Record that a component is alive (error None) or that its last run failed."""
+        if error is None:
+            self.c.execute(
+                "INSERT INTO heartbeat (tenant_id, component, last_ok) VALUES (%s, %s, now()) "
+                "ON CONFLICT (tenant_id, component) DO UPDATE SET last_ok = now(), last_error = NULL",
+                (tenant_id, component))
+        else:
+            self.c.execute(
+                "INSERT INTO heartbeat (tenant_id, component, last_error) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant_id, component) DO UPDATE SET last_error = EXCLUDED.last_error",
+                (tenant_id, component, error[:300]))
 
     def admin_heartbeats(self) -> list[dict]:
         cur = self.c.execute(
@@ -370,3 +448,8 @@ class Repo:
         )
         keys = ("created_at", "tenant", "source", "parser", "status", "rows_in", "rows_new", "rows_dup", "error")
         return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+
+def _sha(code: str) -> str:
+    import hashlib
+    return hashlib.sha256(code.encode()).hexdigest()

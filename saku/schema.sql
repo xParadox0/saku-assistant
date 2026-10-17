@@ -116,3 +116,20 @@ CREATE TABLE IF NOT EXISTS member (
     role        TEXT NOT NULL CHECK (role IN ('user', 'admin')), -- admin sees operational metadata of every tenant, never their transactions
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Web account <-> Telegram account. The web identity is the root; the bot trusts a Telegram user only after
+-- a one-time code made in the dashboard is redeemed. One Telegram account per member and vice versa.
+CREATE TABLE IF NOT EXISTS telegram_link (
+    telegram_user_id BIGINT PRIMARY KEY,         -- Telegram's numeric user id, never the username (usernames change)
+    email            TEXT NOT NULL UNIQUE REFERENCES member(email) ON DELETE CASCADE,
+    tenant_id        TEXT NOT NULL REFERENCES tenant(id),
+    linked_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS link_code (
+    code_hash   TEXT PRIMARY KEY,                -- sha256 of the code; the code itself is never stored
+    email       TEXT NOT NULL REFERENCES member(email) ON DELETE CASCADE,
+    expires_at  TIMESTAMPTZ NOT NULL,            -- 10 minutes after creation
+    used_at     TIMESTAMPTZ,                     -- single use
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

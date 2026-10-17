@@ -4,6 +4,7 @@
     python -m saku demo                            load synthetic demo data and print monthly cash flow
     python -m saku add-member EMAIL TENANT [admin] allow an email (verified by Cloudflare Access) into a tenant
     python -m saku serve [--host H] [--port P]     run the dashboard
+    python -m saku bot                             run the Telegram bot (long polling; needs TELEGRAM_BOT_TOKEN)
 """
 from __future__ import annotations
 
@@ -79,6 +80,13 @@ def main(argv: list[str]) -> int:
         print(f"member {argv[2].lower()} -> tenant {argv[3]}"); return 0
     if cmd == "serve":
         return serve(argv)
+    if cmd == "bot":
+        import logging
+        from .bot import run_polling
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+        init_schema(connect())
+        run_polling(connect)
+        return 0
     print(__doc__); return 2
 
 
