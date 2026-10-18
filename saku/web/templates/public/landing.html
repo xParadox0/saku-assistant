@@ -1,30 +1,61 @@
 {% extends "public/base.html" %}
 {% from "_macros.html" import icon %}
 {% block content %}
-<section class="pub-hero rise">
-  <span class="beta-pill">{{ icon('i-shield') }}{{ t.beta_note }}</span>
-  <h1>{{ t.hero_title }}</h1>
-  <p class="lede">{{ t.hero_lead }}</p>
-  <div class="actions-row">
-    <a class="button" href="/app">{{ icon('i-plus') }}{{ t.cta_register }}</a>
-    <a class="button quiet" href="/demo">{{ icon('i-chart') }}{{ t.cta_demo }}</a>
+<section class="pub-hero">
+  <div class="rise">
+    <span class="beta-pill">{{ icon('i-shield') }}{{ t.beta_note }}</span>
+    <h1>{{ t.hero_title_a }}<br>{{ t.hero_title_b }} <em>{{ t.hero_title_em }}</em></h1>
+    <p class="lede">{{ t.hero_lead }}</p>
+    <div class="cta">
+      <a class="button" href="/app">{{ t.cta_register }}</a>
+      <a class="button quiet" href="/demo">{{ t.cta_demo }}</a>
+    </div>
+    <ul class="trust">
+      <li>{{ icon('i-shield') }}{{ t.trust_1 }}</li>
+      <li>{{ icon('i-check') }}{{ t.trust_2 }}</li>
+      <li>{{ icon('i-chart') }}{{ t.trust_3 }}</li>
+    </ul>
+  </div>
+  <div class="stage" aria-hidden="true">
+    <svg class="stage-mark" viewBox="0 0 100 100">
+      <g class="blk b1"><path fill="#A7D7B5" d="M10 13Q10 6 17 6H49.5Q56.5 6 56.5 13V32H10Z"/></g>
+      <g class="blk b2"><path fill="#F0BE63" d="M59.5 21Q59.5 14 66.5 14H83Q90 14 90 21V41.2C80 44.2 68 54.8 59.5 54.8Z"/></g>
+      <g class="blk b3"><path fill="#E67D63" d="M10 41.5Q10 34.5 17 34.5H49.5Q56.5 34.5 56.5 41.5V55.2C40 55.2 24 47.2 10 47.2Z"/></g>
+      <path fill="#0F6B4F" d="M10 50C24 50 40 58 56 58C70 58 80 47 90 44V69Q90 73.4 86.6 75.8L54.4 95.4Q50 98 45.6 95.4L13.4 75.8Q10 73.4 10 69Z"/>
+    </svg>
+    {% if stage %}
+    <div class="s-chip c1"><span class="tile">{{ icon('i-arrow-in') }}</span><span>{{ t.stage_c1_t }} +{{ stage.income|rupiah_short }}<small>{{ t.stage_c1_s }}</small></span></div>
+    <div class="s-chip c2"><span class="tile">{{ icon(cat(stage.top_cat)[1] if stage.top_cat else 'i-food') }}</span><span>{{ t.stage_c2_t if stage.top_cat in (None, 'food') else cat(stage.top_cat)[0] }} {{ stage.top_amount|rupiah_short }}<small>{{ t.stage_c2_s }}</small></span></div>
+    <div class="s-chip c3"><span class="tile">{{ icon('i-repeat') }}</span><span>{{ t.stage_c3_t }}<small>{{ t.stage_c3_s.format(n=stage.repeats) }}</small></span></div>
+    <div class="s-sum">
+      <span class="k">{{ t.stage_sum_k }}</span>
+      <span class="v">{{ stage.net|rupiah }}</span>
+      <svg class="meter" viewBox="0 0 100 6" preserveAspectRatio="none"><rect class="meter-track" width="100" height="6" rx="3"/><rect class="meter-fill grow" width="{{ stage.pct }}" height="6" rx="3"/></svg>
+      <p>{{ t.stage_sum_p.format(pct=stage.pct) }}</p>
+    </div>
+    {% endif %}
   </div>
 </section>
 
-<section class="pub-grid rise d1">
-  <article class="note-card info"><span class="note-ic">{{ icon('i-wallet') }}</span><div><h3>{{ t.feat1_title }}</h3><p>{{ t.feat1_body }}</p></div></article>
-  <article class="note-card good"><span class="note-ic">{{ icon('i-check') }}</span><div><h3>{{ t.feat2_title }}</h3><p>{{ t.feat2_body }}</p></div></article>
-  <article class="note-card info"><span class="note-ic">{{ icon('i-phone') }}</span><div><h3>{{ t.feat3_title }}</h3><p>{{ t.feat3_body }}</p></div></article>
+<section class="band rise d1">
+  <h2>{{ t.steps_title }}</h2>
+  <p class="sub">{{ t.steps_sub }}</p>
+  <ol class="big-steps">
+    <li><span class="n">1</span><h3>{{ t.step1_t }}</h3><p>{{ t.step1_b }}</p></li>
+    <li><span class="n">2</span><h3>{{ t.step2_t }}</h3><p>{{ t.step2_b }}</p></li>
+    <li><span class="n">3</span><h3>{{ t.step3_t }}</h3><p>{{ t.step3_b }}</p></li>
+  </ol>
+  <p class="tg-note">{{ icon('i-phone') }}<span>{{ t.tg_note }}</span></p>
 </section>
 
-<section class="pub-split rise d2">
+<section class="band pub-split rise d2">
   <div class="card">
     <h2>{{ t.never_title }}</h2>
     <ul class="never">
-      <li>{{ icon('i-x') }}<span>{{ t.never_1 }}</span></li>
-      <li>{{ icon('i-x') }}<span>{{ t.never_2 }}</span></li>
-      <li>{{ icon('i-x') }}<span>{{ t.never_3 }}</span></li>
-      <li>{{ icon('i-x') }}<span>{{ t.never_4 }}</span></li>
+      <li><span class="x">{{ icon('i-x') }}</span><span>{{ t.never_1 }}</span></li>
+      <li><span class="x">{{ icon('i-x') }}</span><span>{{ t.never_2 }}</span></li>
+      <li><span class="x">{{ icon('i-x') }}</span><span>{{ t.never_3 }}</span></li>
+      <li><span class="x">{{ icon('i-x') }}</span><span>{{ t.never_4 }}</span></li>
     </ul>
   </div>
   <div class="card">

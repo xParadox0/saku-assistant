@@ -3,25 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#090B10">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#F7F3EA">
   <meta name="description" content="{{ t.hero_lead }}">
   <title>{% block title %}Saku{% endblock %}</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="preload" href="/static/fonts/space-grotesk-600.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/brand/saku-app-icon.svg">
+  <link rel="preload" href="/static/fonts/nunito-900.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/plus-jakarta-sans-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/saku.css">
 </head>
 <body class="public">
 {% include "_icons.html" %}
 <header class="pub-top">
-  <a class="wordmark" href="/"><span class="mark" aria-hidden="true">S</span>Saku</a>
+  <a class="wordmark" href="/" aria-label="Saku"><img src="/static/brand/saku-lockup.svg" alt="Saku" width="120" height="36"></a>
   <nav class="pub-nav" aria-label="Site">
     <a href="/demo" {% if page == 'demo' %}aria-current="page"{% endif %}>{{ t.nav_demo }}</a>
-    <a href="/privacy" {% if page == 'privacy' %}aria-current="page"{% endif %}>{{ t.nav_privacy }}</a>
+    <a href="/privacy" class="hide-m" {% if page == 'privacy' %}aria-current="page"{% endif %}>{{ t.nav_privacy }}</a>
     <form method="post" action="/lang" class="lang-form">
       <input type="hidden" name="lang" value="{{ 'en' if lang == 'id' else 'id' }}">
       <input type="hidden" name="next" value="{{ here }}">
-      <button type="submit" class="quiet small" lang="{{ 'en' if lang == 'id' else 'id' }}">{{ t.lang_other }}</button>
+      <button type="submit" lang="{{ 'en' if lang == 'id' else 'id' }}" title="{{ t.lang_other }}"><span class="lang-long">{{ t.lang_other }}</span><span class="lang-short">{{ 'EN' if lang == 'id' else 'ID' }}</span></button>
     </form>
     <a class="button small" href="/app">{{ t.nav_signin }}</a>
   </nav>
@@ -30,9 +32,11 @@
   {% block content %}{% endblock %}
 </main>
 <footer class="pub-foot">
-  <p>{{ t.footer_by }} <a href="https://github.com/xParadox0/saku-assistant" rel="noopener">{{ t.footer_repo }}</a> ·
-     <a href="/privacy">{{ t.nav_privacy }}</a> · <a href="/terms">{{ t.nav_terms }}</a></p>
-  <p>{{ t.footer_not_advice }}</p>
+  <div class="pub-foot-in">
+    <p>{{ t.footer_by }} <a href="https://github.com/xParadox0/saku-assistant" rel="noopener">{{ t.footer_repo }}</a> ·
+       <a href="/privacy">{{ t.nav_privacy }}</a> · <a href="/terms">{{ t.nav_terms }}</a></p>
+    <p>{{ t.footer_not_advice }}</p>
+  </div>
 </footer>
 </body>
 </html>

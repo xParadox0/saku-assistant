@@ -366,7 +366,18 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
 
     @app.get("/", response_class=HTMLResponse)
     def landing(request: Request):
-        return pub_render(request, "public/landing.html", "landing")
+        stage = None
+        with repo_ctx() as repo:  # example figures come from the synthetic demo tenant only
+            month = repo.latest_month(DEMO_TENANT)
+            if month:
+                cf = repo.monthly_series(DEMO_TENANT, month, 1)[-1]
+                cats = repo.spending_by_category(DEMO_TENANT, cf["start"], cf["end"])
+                top = cats[0] if cats else None
+                pct = int((cf["net"] / cf["income"] * 100).to_integral_value()) if cf["income"] > 0 else 0
+                stage = {"income": cf["income"], "net": cf["net"], "pct": max(min(pct, 100), 0),
+                         "top_cat": top["category"] if top else None, "top_amount": top["amount"] if top else 0,
+                         "repeats": len(repo.recurring_charges(DEMO_TENANT, cf["start"]))}
+        return pub_render(request, "public/landing.html", "landing", stage=stage)
 
     @app.get("/demo", response_class=HTMLResponse)
     def demo_page(request: Request):

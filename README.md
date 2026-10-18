@@ -52,9 +52,10 @@ July 2026: income Rp19.500.000, spending Rp4.657.980, surplus Rp14.842.020 (10 o
 
 Server-rendered HTML, no JavaScript. A bento overview: what is left this month, where the money went (category ring), plain-language observations computed from SQL, month-by-month trend, accounts, latest activity and charges that repeat every month. Motion is CSS only and switches off for users who ask for reduced motion.
 
-- Typefaces: Space Grotesk and Inter, SIL OFL, self-hosted (`saku/web/static/fonts/`).
+- Logo: three blocks (your accounts) dropping into one pocket ("saku" means pocket). Vector files in `saku/web/static/brand/`, rebuilt with `tools/build_logo.py`.
+- Palette from the logo: pocket green `#0F6B4F`, mint `#A7D7B5`, coral `#E67D63`, honey `#F0BE63`, ink `#1F2D28` on warm paper `#F7F3EA`.
+- Typefaces: Nunito (headings, figures, wordmark) and Plus Jakarta Sans (text), both SIL OFL, self-hosted (`saku/web/static/fonts/`).
 - Icons: [Phosphor Icons](https://github.com/phosphor-icons/core) duotone, MIT (`saku/web/static/icons/LICENSE-phosphor.txt`), rebuilt with `tools/build_icons.py`.
-- Photos: optional header photography from Unsplash, fetched by `tools/fetch_photos.py` and not committed until each licence is confirmed. Without them the header falls back to a flat surface.
 - The stylesheet passes the [taste-skill](https://github.com/Leonxlnx/taste-skill) lint with no failures.
 
 ## Run the dashboard

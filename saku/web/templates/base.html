@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#090B10">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#F1EBDD">
   <title>{% block title %}Saku{% endblock %}</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="preload" href="/static/fonts/space-grotesk-600.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/static/fonts/nunito-900.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/plus-jakarta-sans-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/saku.css">
 </head>
 <body>
@@ -17,7 +18,7 @@
   <div class="side-col">
   <aside class="side">
     <div class="brand">
-      <a class="wordmark" href="/app"><span class="mark" aria-hidden="true">S</span>Saku</a>
+      <a class="wordmark" href="/app" aria-label="Saku"><img src="/static/brand/saku-lockup.svg" alt="Saku" width="113" height="34"></a>
       <p class="tagline">All your accounts, one honest monthly picture.</p>
     </div>
     {% if email %}
