@@ -511,3 +511,5 @@ textarea:focus { border-color: var(--accent); outline: none; }
 .code-input { font: 900 28px/1 var(--display); letter-spacing: .3em; text-align: center; padding: 14px; }
 button.linklike { background: none; color: var(--muted); padding: 0 4px; min-height: 0; font: 600 13px var(--text); text-decoration: underline; text-underline-offset: 3px; }
 button.linklike:hover { background: none; color: var(--ink); }
+.closed-note { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0 0; color: var(--muted); font-size: 14px; max-width: 34em; }
+.closed-note .ic { color: var(--warn); width: 18px; height: 18px; margin-top: 2px; }

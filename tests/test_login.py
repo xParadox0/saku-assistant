@@ -275,3 +275,14 @@ def test_login_pages_render_in_both_languages(world, db_url, tmp_path):
     assert "Sign in to Saku" in c.get("/login").text
     c.cookies.set("saku_lang", "id")
     assert "Masuk ke Saku" in c.get("/login").text
+
+
+def test_closed_registration_is_explained_not_a_dead_end(world, db_url, tmp_path):
+    """While registration is closed the landing does not offer a sign-up that can never send a code,
+    and /login says so for everyone (global state, so it reveals nothing about any address)."""
+    c, _ = make(db_url, tmp_path, Beta(registration_open=False))
+    home = c.get("/").text
+    assert "Request beta access" not in home and "Registration opens after" in home
+    assert "invite-only" in c.get("/login").text
+    c2, _ = make(db_url, tmp_path, Beta(registration_open=True, policy_reviewed=i18n.POLICY_VERSION))
+    assert "Request beta access" in c2.get("/").text and "invite-only" not in c2.get("/login").text

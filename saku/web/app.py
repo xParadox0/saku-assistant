@@ -399,7 +399,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         lang = lang_of(request)
         return templates.TemplateResponse(request, name, {"lang": lang, "t": i18n.strings(lang), "page": page,
                                                           "here": request.url.path, "own_login": login is not None,
-                                                          **ctx}, status_code=status_code)
+                                                          "reg_open": beta.registration_open, **ctx}, status_code=status_code)
 
     @app.get("/", response_class=HTMLResponse)
     def landing(request: Request):

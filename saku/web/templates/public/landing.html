@@ -7,9 +7,11 @@
     <h1>{{ t.hero_title_a }}<br>{{ t.hero_title_b }} <em>{{ t.hero_title_em }}</em></h1>
     <p class="lede">{{ t.hero_lead }}</p>
     <div class="cta">
-      <a class="button" href="/app">{{ t.cta_register }}</a>
+      {% if reg_open %}<a class="button" href="/app">{{ t.cta_register }}</a>
       <a class="button quiet" href="/demo">{{ t.cta_demo }}</a>
+      {% else %}<a class="button" href="/demo">{{ t.cta_demo }}</a>{% endif %}
     </div>
+    {% if not reg_open %}<p class="closed-note">{{ icon('i-calendar') }}<span>{{ t.reg_closed_note }}</span></p>{% endif %}
     <ul class="trust">
       <li>{{ icon('i-shield') }}{{ t.trust_1 }}</li>
       <li>{{ icon('i-check') }}{{ t.trust_2 }}</li>

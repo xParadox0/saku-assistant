@@ -7,6 +7,7 @@
   {% if step == 'email' %}
     <h1>{{ t.login_title }}</h1>
     <p class="lede small">{{ t.login_lead }}</p>
+    {% if not reg_open %}<p class="notice">{{ icon('i-shield') }}<span>{{ t.login_members_only }}</span></p>{% endif %}
     {% if error == 'email' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_email }}</span></p>{% endif %}
     {% if error == 'limited' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_limited }}</span></p>{% endif %}
     {% if error == 'mail' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_mail }}</span></p>{% endif %}
@@ -21,6 +22,7 @@
   {% else %}
     <h1>{{ t.login_code_title }}</h1>
     <p class="lede small">{{ t.login_code_lead.format(email=email) }}</p>
+    {% if not reg_open %}<p class="hint">{{ t.login_code_members_hint }}</p>{% endif %}
     {% if error == 'code' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_code }}</span></p>{% endif %}
     <form method="post" action="/login/code" class="signup-form">
       <input type="hidden" name="csrf" value="{{ csrf }}">

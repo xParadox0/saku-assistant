@@ -103,6 +103,9 @@ EN: dict[str, str] = {
     "login_err_code": "That code is wrong or has expired. Check the latest email, or ask for a new code.",
     "login_err_limited": "Too many tries. Wait an hour and try again.",
     "login_err_mail": "We could not send the email just now. Try again in a few minutes.",
+    "reg_closed_note": "Registration opens after the privacy policy has been reviewed. Until then only invited members can sign in.",
+    "login_members_only": "Saku is invite-only for now. Only approved members receive a code. Registration opens after the privacy review.",
+    "login_code_members_hint": "No email after a few minutes? Check the spelling. Right now codes go only to approved members.",
     "signout": "Sign out",
 }
 

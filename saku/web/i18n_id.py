@@ -94,5 +94,8 @@ ID: dict[str, str] = {
     "login_err_code": "Kodenya salah atau sudah kedaluwarsa. Cek email terbaru, atau minta kode baru.",
     "login_err_limited": "Terlalu banyak percobaan. Tunggu satu jam, lalu coba lagi.",
     "login_err_mail": "Email belum bisa dikirim sekarang. Coba lagi beberapa menit lagi.",
+    "reg_closed_note": "Pendaftaran dibuka setelah kebijakan privasi selesai ditinjau. Sampai saat itu, hanya member undangan yang bisa masuk.",
+    "login_members_only": "Saat ini Saku hanya untuk member undangan. Kode hanya dikirim ke member yang sudah disetujui. Pendaftaran dibuka setelah tinjauan privasi selesai.",
+    "login_code_members_hint": "Belum ada email setelah beberapa menit? Cek ejaan alamatnya. Untuk sekarang, kode hanya dikirim ke member yang sudah disetujui.",
     "signout": "Keluar",
 }
