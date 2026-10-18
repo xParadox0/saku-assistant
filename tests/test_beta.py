@@ -303,3 +303,12 @@ def test_indonesian_strings_complete():
     assert set(EN) == set(ID)
     for k in EN:
         assert set(re.findall(r"{\w+}", EN[k])) == set(re.findall(r"{\w+}", ID[k])), k
+
+
+def test_contact_email_survives_cloudflare_obfuscation(world, db_url, tmp_path):
+    """Cloudflare's Email Obfuscation needs a script that our CSP blocks; email_off keeps the address readable."""
+    c = make(db_url, tmp_path, OPEN)
+    for lang in ("en", "id"):
+        c.cookies.set("saku_lang", lang)
+        page = c.get("/privacy").text
+        assert "<!--email_off--><a href=\"mailto:x@example.org\">x@example.org</a><!--/email_off-->" in page, lang
