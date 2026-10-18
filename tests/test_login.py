@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from saku.web import i18n
 from saku.web.app import Beta, create_app
 from saku.web.auth import AuthError, Identity
-from saku.web.login import Limits, Login, MailError, OutboxMailer
+from saku.web.login import Limits, Login, MailError, OutboxMailer, email_message
 
 SECRET = "s" * 40
 
@@ -299,3 +299,13 @@ def test_request_access_is_a_two_step_flow_that_ends_on_the_form(world, db_url, 
                                     "code": mailer.sent[-1][1], "next": "/app/register"}, follow_redirects=False)
     assert r.headers["location"] == "/app/register"
     assert "Step 2 of 2" in c.get("/app/register").text
+
+
+def test_email_code_uses_saku_branded_html_in_both_languages():
+    for lang, phrase, duration in (("en", "Your sign-in code", "10 minutes"),
+                                   ("id", "Kode masuk kamu", "10 menit")):
+        subject, html = email_message(lang, "246810")
+        assert "246810" in subject and "246810" in html
+        assert phrase in html and duration in html
+        assert "#0F6B4F" in html and "#F7F3EA" in html and "#F0BE63" in html
+        assert "Saku" in html and "password" in html and "PIN" in html and "OTP" in html

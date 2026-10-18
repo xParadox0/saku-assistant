@@ -32,7 +32,7 @@
     <h1>{{ t.rejected_title }}</h1><p class="lede">{{ t.rejected_body }}</p>
   {% endif %}
   {% if own_login %}
-  <form method="post" action="/logout" class="hint"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="linklike">{{ t.signout }}</button></form>
-  {% else %}<p class="hint"><a href="/cdn-cgi/access/logout">{{ t.signout }}</a></p>{% endif %}
+  <form method="post" action="/logout" class="signup-signout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="button signout-button">{{ icon('i-arrow-out') }}{{ t.signout }}</button></form>
+  {% else %}<p class="signup-signout"><a class="button signout-button" href="/cdn-cgi/access/logout">{{ icon('i-arrow-out') }}{{ t.signout }}</a></p>{% endif %}
 </section>
 {% endblock %}

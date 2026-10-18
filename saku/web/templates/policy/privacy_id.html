@@ -4,7 +4,7 @@
 
 <h2>Data yang disimpan Saku</h2>
 <ul>
-  <li><b>Alamat email Anda</b>, yang diverifikasi oleh Cloudflare Access saat Anda login dengan kode sekali pakai.</li>
+  <li><b>Alamat email Anda</b>, yang diverifikasi Saku dengan kode 6 digit melalui Microsoft 365.</li>
   <li><b>Permintaan beta Anda</b>: nama tampilan dan catatan opsional yang Anda berikan. Saku juga menyimpan bahasa yang Anda gunakan, versi kebijakan yang Anda setujui, dan waktu persetujuannya.</li>
   <li><b>Jika permintaan Anda disetujui</b>: rekening yang Anda tambahkan. Untuk setiap rekening, Saku menyimpan nama, jenis, penyedia, dan maksimal 4 digit terakhir nomornya. Saku juga menyimpan transaksi yang dibaca dari mutasi rekening yang Anda upload atau pesan yang Anda kirim ke bot Saku.</li>
   <li><b>Jika Anda menghubungkan Telegram</b>: ID pengguna Telegram Anda yang berupa angka. Bukan nomor telepon atau username Anda.</li>
@@ -21,7 +21,7 @@
 <p>Saku menggunakan data untuk menampilkan gambaran keuangan Anda dari berbagai rekening dan menjalankan program beta. Ini mencakup penentuan siapa yang mendapat akses dan menghubungi Anda tentang akun Anda. Saku tidak menggunakan data Anda untuk iklan, membuat skor kredit, menjual data, atau membagikan data Anda.</p>
 
 <h2>Lokasi data</h2>
-<p>Data disimpan di server milik pengelola proyek di Indonesia. Lalu lintas data melewati Cloudflare, yang menangani proses login dan koneksi terenkripsi. Telegram memproses pesan yang Anda kirim ke bot. Jika kelak ada fitur yang mengirim teks ke penyedia model AI, detail pribadi akan dihapus lebih dahulu. Kebijakan ini akan diperbarui sebelum fitur tersebut digunakan.</p>
+<p>Data disimpan di server milik pengelola proyek di Indonesia. Lalu lintas data melewati Cloudflare dengan koneksi terenkripsi. Microsoft 365 mengirim kode login. Telegram memproses pesan yang Anda kirim ke bot. Jika kelak ada fitur yang mengirim teks ke penyedia model AI, detail pribadi akan dihapus lebih dahulu. Kebijakan ini akan diperbarui sebelum fitur tersebut digunakan.</p>
 
 <h2>Lama penyimpanan</h2>
 <ul>
@@ -34,7 +34,7 @@
 <p>Berdasarkan Undang-Undang Nomor 27 Tahun 2022 tentang Pelindungan Data Pribadi (UU PDP), Anda memiliki beberapa hak. Anda dapat meminta akses ke data Anda, salinan data, perbaikan, penghapusan, dan penarikan persetujuan. Kirim permintaan ke kontak di atas. Tombol ekspor dan hapus akan ditambahkan ke dashboard sebelum beta ini menerima pengguna lain.</p>
 
 <h2>Keamanan</h2>
-<p>Proses login menggunakan Cloudflare Access. Server tidak memiliki port yang terbuka ke internet. Data setiap pengguna dipisahkan di database. Setiap query difilter berdasarkan pemilik data. Tidak ada sistem yang sepenuhnya aman. Jika terjadi kebocoran yang berdampak pada data Anda, Anda akan diberi tahu.</p>
+<p>Saku menggunakan kode email sekali pakai dan session yang dapat dicabut dari server. Halaman Ops memakai Cloudflare Access sebagai lapisan kedua untuk admin. Server tidak memiliki port yang terbuka ke internet. Data setiap pengguna dipisahkan di database. Setiap query difilter berdasarkan pemilik data. Tidak ada sistem yang sepenuhnya aman. Jika terjadi kebocoran yang berdampak pada data Anda, Anda akan diberi tahu.</p>
 
 <h2>Perubahan</h2>
 <p>Setiap versi baru kebijakan ini akan memiliki tanggal versi baru. Jika perubahan memengaruhi cara data Anda digunakan, Anda akan diminta untuk menyetujuinya lagi.</p>

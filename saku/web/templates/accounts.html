@@ -93,11 +93,13 @@
       <label><input type="radio" name="kind" value="{{ k }}" {% if loop.first %}checked{% endif %}><span>{{ acct_icon(k) }}{{ {'bank': 'Bank', 'ewallet': 'E-wallet', 'cash': 'Cash'}.get(k, k|title) }}</span></label>
       {% endfor %}
     </fieldset>
-    <label class="field"><span>Provider</span>
-      <input name="provider" list="providers" required pattern="[a-z0-9_]{2,30}" placeholder="e.g. cash or other">
-      <datalist id="providers">{% for p in providers %}<option value="{{ p }}">{% endfor %}</datalist></label>
+    <label class="field provider-field"><span>Search provider</span>
+      <input type="search" name="provider" list="providers" required pattern="[a-z0-9_]{2,30}"
+             autocomplete="off" placeholder="Search bank or e-wallet">
+      <datalist id="providers">{% for value, label in providers %}<option value="{{ value }}" label="{{ label }}">{{ label }}</option>{% endfor %}</datalist>
+      <small>Start typing, then choose a bank or e-wallet.</small></label>
     <label class="field"><span>Last 4 digits, optional</span>
-      <input name="last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"></label>
+      <input type="number" name="last4" inputmode="numeric" min="0" max="9999" step="1" placeholder="1234"></label>
     <label class="field wide"><span>Name shown in Saku</span>
       <input name="label" required maxlength="60" placeholder="Daily spending"></label>
     <div><button type="submit">{{ icon('i-plus') }}Add account</button></div>

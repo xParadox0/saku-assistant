@@ -84,6 +84,17 @@ def test_language_switch(world, db_url, tmp_path):
     assert 'lang="id"' in page and "Kebijakan" in page and "UU PDP" in page
 
 
+def test_privacy_policy_describes_saku_login_and_graph_mail(world, db_url, tmp_path):
+    c = make(db_url, tmp_path, Beta())
+    page = c.get("/privacy").text
+    assert "six-digit code sent through Microsoft 365" in page
+    assert "Cloudflare Access when you sign in" not in page
+    c.cookies.set("saku_lang", "id")
+    page = c.get("/privacy").text
+    assert "kode 6 digit melalui Microsoft 365" in page
+    assert "diverifikasi oleh Cloudflare Access" not in page
+
+
 @pytest.mark.parametrize("nxt", ["https://evil.example/", "//evil.example/", "/\\evil.example"])
 def test_language_switch_refuses_open_redirect(world, db_url, tmp_path, nxt):
     r = make(db_url, tmp_path, Beta()).post("/lang", data={"lang": "id", "next": nxt}, follow_redirects=False)

@@ -281,6 +281,7 @@ details.manage[open] summary .ic { transform: rotate(90deg); }
 .upload { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.5fr) auto; gap: 12px; align-items: end; margin-top: 16px; }
 .field { display: grid; gap: 6px; min-width: 0; }
 .field > span { color: var(--muted); font-size: 13px; font-weight: 500; }
+.field > small { color: var(--faint); font-size: 12px; line-height: 1.4; }
 .grid-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: end; }
 .grid-form .wide { grid-column: span 2; }
 .kind-pick { min-width: 0; display: flex; gap: 8px; flex-wrap: wrap; border: 0; padding: 0; margin: 0; }
@@ -511,6 +512,10 @@ textarea:focus { border-color: var(--accent); outline: none; }
 .code-input { font: 900 28px/1 var(--display); letter-spacing: .3em; text-align: center; padding: 14px; }
 button.linklike { background: none; color: var(--muted); padding: 0 4px; min-height: 0; font: 600 13px var(--text); text-decoration: underline; text-underline-offset: 3px; }
 button.linklike:hover { background: none; color: var(--ink); }
+.signup-signout { margin-top: 24px; }
+.signout-button { background: var(--surface-2); color: var(--ink); }
+.signout-button:hover { background: var(--surface-3); }
+.provider-field input[type="search"] { border-color: var(--mint); background: #FCFFFD; }
 .closed-note { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0 0; color: var(--muted); font-size: 14px; max-width: 34em; }
 .closed-note .ic { color: var(--warn); width: 18px; height: 18px; margin-top: 2px; }
 .step-tag { display: inline-block; margin: 0 0 10px; padding: 5px 12px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700; }

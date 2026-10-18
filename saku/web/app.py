@@ -44,8 +44,18 @@ HERE = Path(__file__).parent
 DEMO_TENANT = "demo"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
-PROVIDER_SUGGESTIONS = ["bca", "bri", "bni", "mandiri", "btn", "cimb", "permata", "danamon", "ocbc", "uob",
-                        "jago", "seabank", "blu", "jenius", "gopay", "ovo", "dana", "shopeepay", "linkaja", "cash", "other"]
+PROVIDER_SUGGESTIONS = [
+    ("bca", "BCA · Bank"), ("bri", "BRI · Bank"), ("bni", "BNI · Bank"),
+    ("mandiri", "Mandiri · Bank"), ("btn", "BTN · Bank"), ("cimb", "CIMB Niaga · Bank"),
+    ("permata", "PermataBank · Bank"), ("danamon", "Danamon · Bank"), ("ocbc", "OCBC · Bank"),
+    ("uob", "UOB · Bank"), ("jago", "Bank Jago · Bank"), ("seabank", "SeaBank · Bank"),
+    ("blu", "blu by BCA Digital · Bank"), ("jenius", "Jenius · Bank"),
+    ("gopay", "GoPay · E-wallet"), ("ovo", "OVO · E-wallet"), ("dana", "DANA · E-wallet"),
+    ("shopeepay", "ShopeePay · E-wallet"), ("linkaja", "LinkAja · E-wallet"),
+    ("isaku", "iSaku · E-wallet"), ("sakuku", "Sakuku · E-wallet"),
+    ("astrapay", "AstraPay · E-wallet"), ("doku", "DOKU · E-wallet"),
+    ("cash", "Cash"), ("other", "Other"),
+]
 CSV_TEMPLATE = "date,amount,description,kind\n2026-07-01,15000000,SALARY,normal\n2026-07-02,-45000,LUNCH,normal\n2026-07-28,-15000,ADMIN FEE,fee\n"
 
 

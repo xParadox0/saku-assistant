@@ -147,6 +147,21 @@ def test_full_account_number_rejected_by_form(client):
     assert r.status_code == 403
 
 
+def test_accounts_form_has_searchable_provider_numeric_last4_and_ewallets(client):
+    page = client.get("/app/accounts", headers=as_("alice@example.com")).text
+    assert 'type="search" name="provider"' in page
+    assert 'type="number" name="last4"' in page
+    for provider in ("GoPay", "OVO", "DANA", "ShopeePay", "LinkAja"):
+        assert provider in page
+
+
+def test_navigation_calls_app_home_dashboard_and_register_signout_is_a_button(client):
+    page = client.get("/app", headers=as_("alice@example.com")).text
+    assert '<span>Dashboard</span>' in page
+    pending = client.get("/app/register", headers=as_("stranger@example.com")).text
+    assert 'class="button signout-button"' in pending
+
+
 def test_csv_upload_imports_dedupes_and_deletes_file(client, seeded, upload_dir):
     tok = csrf(client, "alice@example.com")
     body = b"date,amount,description,kind\n2026-10-01,-45000,KOPI,normal\n02/10/2026,-15000,ADM,fee\n"

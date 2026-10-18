@@ -118,14 +118,54 @@ class Login:
 
 # ---- mail ------------------------------------------------------------------------------------------------
 SUBJECT = {"en": "Your Saku sign-in code: {code}", "id": "Kode masuk Saku kamu: {code}"}
-BODY = {
-    "en": ("Your sign-in code for Saku is\n\n    {code}\n\nIt works once, for 10 minutes.\n\n"
-           "If you did not try to sign in, ignore this email. Nobody can sign in without this code.\n\n"
-           "Saku will never ask for your bank password, PIN or OTP.\n"),
-    "id": ("Kode masuk Saku kamu:\n\n    {code}\n\nKode ini hanya bisa dipakai sekali dan berlaku 10 menit.\n\n"
-           "Kalau kamu tidak sedang masuk ke Saku, abaikan email ini. Tanpa kode ini, tidak ada yang bisa masuk.\n\n"
-           "Saku tidak pernah meminta password bank, PIN, atau OTP kamu.\n"),
+EMAIL_COPY = {
+    "en": {
+        "eyebrow": "SECURE SIGN-IN", "title": "Your sign-in code", "duration": "Use it within 10 minutes.",
+        "one_use": "This code works once. Keep it private.",
+        "ignore": "Didn't request this? You can safely ignore this email. Nobody can sign in without the code.",
+        "safety": "Saku will never ask for your bank password, PIN or OTP.",
+    },
+    "id": {
+        "eyebrow": "MASUK DENGAN AMAN", "title": "Kode masuk kamu", "duration": "Gunakan dalam 10 menit.",
+        "one_use": "Kode ini hanya bisa dipakai sekali. Jangan bagikan ke siapa pun.",
+        "ignore": "Tidak merasa meminta kode? Abaikan email ini. Tidak ada yang bisa masuk tanpa kodenya.",
+        "safety": "Saku tidak pernah meminta password bank, PIN, atau OTP kamu.",
+    },
 }
+
+
+def email_message(lang: str, code: str) -> tuple[str, str]:
+    """Return a branded, self-contained email. Inline styles keep it reliable in Outlook and Gmail."""
+    lang = lang if lang in EMAIL_COPY else "en"
+    c = EMAIL_COPY[lang]
+    subject = SUBJECT[lang].format(code=code)
+    html = f'''<!doctype html><html lang="{lang}"><body style="margin:0;background:#F7F3EA;color:#1F2D28;font-family:Arial,sans-serif">
+<div style="display:none;max-height:0;overflow:hidden">{c['title']}: {code}. {c['duration']}</div>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#F7F3EA"><tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#FFFFFF;border-radius:24px;overflow:hidden">
+<tr><td style="background:#0F6B4F;padding:24px 28px;color:#FFFFFF">
+  <table role="presentation" cellspacing="0" cellpadding="0"><tr>
+    <td style="font-size:25px;font-weight:800;letter-spacing:-1px">saku</td>
+    <td style="padding-left:12px"><table role="presentation" cellspacing="3" cellpadding="0"><tr><td width="10" height="10" style="background:#A7D7B5"></td><td width="10" height="10" style="background:#E67D63"></td></tr><tr><td width="10" height="10" style="background:#F0BE63"></td><td width="10" height="10" style="background:#FFFFFF"></td></tr></table></td>
+  </tr></table>
+</td></tr>
+<tr><td style="padding:36px 32px 12px">
+  <p style="margin:0 0 10px;color:#0F6B4F;font-size:12px;font-weight:700;letter-spacing:1.2px">{c['eyebrow']}</p>
+  <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2">{c['title']}</h1>
+  <p style="margin:0;color:#65716C;font-size:16px;line-height:1.6">{c['duration']}</p>
+</td></tr>
+<tr><td style="padding:20px 32px">
+  <div style="background:#F7F3EA;border-left:6px solid #F0BE63;border-radius:16px;padding:24px;text-align:center">
+    <div style="font-size:38px;font-weight:800;letter-spacing:9px;color:#0F6B4F">{code}</div>
+  </div>
+</td></tr>
+<tr><td style="padding:0 32px 34px;color:#65716C;font-size:14px;line-height:1.65">
+  <p style="margin:0 0 14px">{c['one_use']}</p><p style="margin:0 0 22px">{c['ignore']}</p>
+  <div style="background:#E8F4EC;border-radius:14px;padding:16px;color:#1F2D28"><strong style="color:#0F6B4F">Saku</strong><br>{c['safety']}</div>
+</td></tr></table>
+<p style="margin:18px 0 0;color:#7D8782;font-size:12px">Saku · Personal finance, one honest pocket.</p>
+</td></tr></table></body></html>'''
+    return subject, html
 
 
 class GraphMailer:
@@ -154,9 +194,9 @@ class GraphMailer:
         return self._token
 
     def send_code(self, to: str, code: str, lang: str) -> None:
-        lang = lang if lang in BODY else "en"
-        msg = {"message": {"subject": SUBJECT[lang].format(code=code),
-                           "body": {"contentType": "Text", "content": BODY[lang].format(code=code)},
+        subject, html = email_message(lang, code)
+        msg = {"message": {"subject": subject,
+                           "body": {"contentType": "HTML", "content": html},
                            "toRecipients": [{"emailAddress": {"address": to}}]},
                "saveToSentItems": False}
         req = urllib.request.Request(
