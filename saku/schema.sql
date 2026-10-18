@@ -148,3 +148,35 @@ CREATE TABLE IF NOT EXISTS signup (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS signup_status ON signup (status, created_at);
+
+-- Own sign-in (HLD 3.11). Codes and session tokens are never stored in plain form.
+CREATE TABLE IF NOT EXISTS login_code (
+    id          BIGSERIAL PRIMARY KEY,
+    email       TEXT NOT NULL CHECK (email = lower(email)),
+    code_hmac   TEXT NOT NULL,                  -- HMAC(secret, salt | email | code)
+    salt        TEXT NOT NULL,
+    attempts    INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    expires_at  TIMESTAMPTZ NOT NULL,           -- 10 minutes after creation
+    used_at     TIMESTAMPTZ,                    -- single use; also set when a newer code replaces it
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS login_code_email ON login_code (email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS web_session (
+    sid_sha256   TEXT PRIMARY KEY,            -- SHA-256 of the session id; the id itself lives only in the browser cookie
+    email        TEXT NOT NULL CHECK (email = lower(email)),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ NOT NULL,          -- 30 days after creation
+    revoked_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS web_session_email ON web_session (email);
+
+CREATE TABLE IF NOT EXISTS login_event (
+    kind        TEXT NOT NULL CHECK (kind IN ('request', 'fail')),
+    email_hmac  TEXT NOT NULL,
+    ip_hmac     TEXT NOT NULL,
+    at          TIMESTAMPTZ NOT NULL DEFAULT now()   -- purged after 24 hours
+);
+CREATE INDEX IF NOT EXISTS login_event_email ON login_event (kind, email_hmac, at);
+CREATE INDEX IF NOT EXISTS login_event_ip ON login_event (kind, ip_hmac, at);

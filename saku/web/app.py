@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable
+from urllib.parse import quote
 
 import psycopg
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -37,6 +38,7 @@ from ..format import rupiah, rupiah_short, signed_rupiah
 from ..repo import ACCOUNT_KINDS, Repo
 from . import i18n
 from .auth import AuthError, AuthUnavailable, CloudflareAccessAuth, DevAuth, Identity
+from .login import GraphMailer, Login, MailError, OutboxMailer, normalise_email
 
 HERE = Path(__file__).parent
 DEMO_TENANT = "demo"
@@ -57,6 +59,14 @@ class NotFound(Exception):
 
 class NotMember(Exception):
     """A verified email without a member row: it may only see the registration flow."""
+
+
+class LoginRequired(Exception):
+    """No live Saku session (own sign-in mode)."""
+
+
+SESSION_COOKIE = "saku_session"
+PRE_COOKIE = "saku_pre"  # random pre-login value; binds the login forms' CSRF token to this browser
 
 
 @dataclass
@@ -105,8 +115,13 @@ def _donut(cats: list[dict], total: Decimal) -> list[dict]:
 
 def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, secret: str,
                upload_root: str | None = None, bot_username: str | None = None,
-               beta: Beta | None = None) -> FastAPI:
+               beta: Beta | None = None, login: Login | None = None, admin_guard=None) -> FastAPI:
+    """authenticator: identifies from request headers (dev mode, tests). login: Saku's own sign-in; when set it
+    replaces the authenticator for every /app route. admin_guard: an extra header check (Cloudflare Access) that
+    /app/admin must also pass, for the same email."""
     beta = beta or Beta()
+    if login is None and authenticator is None:
+        raise SystemExit("either an authenticator or the own sign-in is required")
     bot_username = (bot_username or "").lstrip("@") or None
     if bot_username and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username):
         raise SystemExit("SAKU_BOT_USERNAME is not a valid Telegram username")
@@ -131,8 +146,22 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def csrf_token(email: str) -> str:
         return hmac.new(key, f"csrf|{email}".encode(), hashlib.sha256).hexdigest()
 
+    def identify(request: Request, repo: Repo) -> Identity:
+        if login is not None:
+            email = login.session_email(repo, request.cookies.get(SESSION_COOKIE))
+            if not email:
+                raise LoginRequired()
+            return Identity(email)
+        return authenticator.identify(request.headers)
+
+    def require_admin(request: Request, ident: Identity, member: dict) -> None:
+        if member["role"] != "admin":
+            raise Forbidden("Admin only.")
+        if admin_guard is not None and admin_guard.identify(request.headers).email != ident.email:
+            raise AuthError("the admin check is for a different email")
+
     def who(request: Request, repo: Repo) -> tuple[Identity, dict]:
-        ident = authenticator.identify(request.headers)
+        ident = identify(request, repo)
         member = repo.member(ident.email)
         if member is None:
             raise NotMember(ident.email)
@@ -144,7 +173,8 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
 
     def render(request: Request, name: str, ident: Identity, member: dict, **ctx) -> HTMLResponse:
         return templates.TemplateResponse(request, name, {"email": ident.email, "role": member["role"],
-                                                          "tenant": member["tenant_id"], "csrf": csrf_token(ident.email), **ctx})
+                                                          "tenant": member["tenant_id"], "csrf": csrf_token(ident.email),
+                                                          "own_login": login is not None, **ctx})
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
@@ -166,6 +196,12 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     async def _auth_down(request: Request, exc: AuthUnavailable):
         return templates.TemplateResponse(request, "error.html", {"title": "Sign-in check unavailable",
             "message": "Saku could not reach Cloudflare to verify your sign-in. Try again in a minute."}, status_code=503)
+
+    @app.exception_handler(LoginRequired)
+    async def _login_required(request: Request, exc: LoginRequired):
+        if request.method == "GET":
+            return RedirectResponse("/login?next=" + quote(request.url.path, safe="/"), status_code=303)
+        return RedirectResponse("/login", status_code=303)
 
     @app.exception_handler(NotMember)
     async def _not_member(request: Request, exc: NotMember):
@@ -362,7 +398,8 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def pub_render(request: Request, name: str, page: str, status_code: int = 200, **ctx) -> HTMLResponse:
         lang = lang_of(request)
         return templates.TemplateResponse(request, name, {"lang": lang, "t": i18n.strings(lang), "page": page,
-                                                          "here": request.url.path, **ctx}, status_code=status_code)
+                                                          "here": request.url.path, "own_login": login is not None,
+                                                          **ctx}, status_code=status_code)
 
     @app.get("/", response_class=HTMLResponse)
     def landing(request: Request):
@@ -409,6 +446,91 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         resp.set_cookie("saku_lang", i18n.pick_lang(lang), max_age=365 * 24 * 3600, samesite="lax", secure=True, httponly=True)
         return resp
 
+    # ---- own sign-in (HLD 3.11) ------------------------------------------------------------------------------
+    def pre_value(request: Request) -> tuple[str, bool]:
+        v = request.cookies.get(PRE_COOKIE, "")
+        if re.fullmatch(r"[A-Za-z0-9_\-]{20,64}", v):
+            return v, False
+        return secrets.token_urlsafe(24), True
+
+    def pre_csrf(pre: str) -> str:
+        return hmac.new(key, f"pre|{pre}".encode(), hashlib.sha256).hexdigest()
+
+    def safe_next(n: str) -> str:
+        return n if re.fullmatch(r"/app(/[A-Za-z0-9_\-/]*)?", n or "") else "/app"
+
+    def client_ip(request: Request) -> str:
+        return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "")
+
+    def login_page(request: Request, step: str, status_code: int = 200, **ctx) -> HTMLResponse:
+        pre, fresh = pre_value(request)
+        resp = pub_render(request, "public/login.html", "login", status_code=status_code, step=step,
+                          csrf=pre_csrf(pre), **ctx)
+        if fresh:
+            resp.set_cookie(PRE_COOKIE, pre, max_age=3600, samesite="lax", secure=True, httponly=True, path="/")
+        return resp
+
+    def check_pre(request: Request, token: str) -> None:
+        pre = request.cookies.get(PRE_COOKIE, "")
+        if not pre or not hmac.compare_digest(token or "", pre_csrf(pre)):
+            raise Forbidden("The form expired. Reload the page and try again.")
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request, next: str = "/app"):
+        if login is None:
+            return RedirectResponse("/app", status_code=303)
+        with repo_ctx() as repo:
+            if login.session_email(repo, request.cookies.get(SESSION_COOKIE)):
+                return RedirectResponse(safe_next(next), status_code=303)
+        return login_page(request, "email", next=safe_next(next))
+
+    @app.post("/login", response_class=HTMLResponse)
+    def login_request(request: Request, csrf: str = Form(""), email: str = Form(""), next: str = Form("/app")):
+        if login is None:
+            raise NotFound("Not found.")
+        check_pre(request, csrf)
+        addr = normalise_email(email)
+        if addr is None:
+            return login_page(request, "email", status_code=400, error="email", next=safe_next(next), email=email[:254])
+        with repo_ctx() as repo:
+            try:
+                outcome = login.request_code(repo, addr, client_ip(request), lang_of(request), beta.registration_open)
+            except MailError:
+                return login_page(request, "email", status_code=503, error="mail", next=safe_next(next), email=addr)
+        if outcome == "limited":
+            return login_page(request, "email", status_code=429, error="limited", next=safe_next(next), email=addr)
+        return login_page(request, "code", email=addr, next=safe_next(next))  # same page for sent and silent
+
+    @app.post("/login/code", response_class=HTMLResponse)
+    def login_verify(request: Request, csrf: str = Form(""), email: str = Form(""), code: str = Form(""),
+                     next: str = Form("/app")):
+        if login is None:
+            raise NotFound("Not found.")
+        check_pre(request, csrf)
+        addr = normalise_email(email)
+        if addr is None:
+            return RedirectResponse("/login", status_code=303)
+        with repo_ctx() as repo:
+            token = login.verify_code(repo, addr, code, client_ip(request))
+        if token is None:
+            return login_page(request, "code", status_code=400, error="code", email=addr, next=safe_next(next))
+        resp = RedirectResponse(safe_next(next), status_code=303)
+        resp.set_cookie(SESSION_COOKIE, token, max_age=30 * 24 * 3600, samesite="lax", secure=True, httponly=True,
+                        path="/")
+        resp.delete_cookie(PRE_COOKIE, path="/")
+        return resp
+
+    @app.post("/logout")
+    def logout(request: Request, csrf: str = Form("")):
+        if login is not None:
+            with repo_ctx() as repo:
+                ident = identify(request, repo)
+                check_csrf(ident, csrf)
+                login.end_session(repo, request.cookies.get(SESSION_COOKIE))
+        resp = RedirectResponse("/", status_code=303)
+        resp.delete_cookie(SESSION_COOKIE, path="/")
+        return resp
+
     # ---- registration (verified email, no member row) -------------------------------------------------------
     def signup_state(repo: Repo, email: str) -> tuple[str, dict | None]:
         s = repo.signup_get(email)
@@ -423,7 +545,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     @app.get("/app/register", response_class=HTMLResponse)
     def register_page(request: Request):
         with repo_ctx() as repo:
-            ident = authenticator.identify(request.headers)
+            ident = identify(request, repo)
             if repo.member(ident.email) is not None:
                 return RedirectResponse("/app", status_code=303)
             state, s = signup_state(repo, ident.email)
@@ -435,7 +557,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def register_submit(request: Request, csrf: str = Form(""), display_name: str = Form(""),
                         note: str = Form(""), consent: str = Form("")):
         with repo_ctx() as repo:
-            ident = authenticator.identify(request.headers)
+            ident = identify(request, repo)
             check_csrf(ident, csrf)
             if repo.member(ident.email) is not None:
                 return RedirectResponse("/app", status_code=303)
@@ -459,8 +581,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def decide(request: Request, csrf: str = Form(""), email: str = Form(""), action: str = Form("")):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
-            if member["role"] != "admin":
-                raise Forbidden("Admin only.")
+            require_admin(request, ident, member)
             check_csrf(ident, csrf)
             if action not in ("approve", "reject"):
                 raise Forbidden("Unknown action.")
@@ -474,8 +595,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def admin(request: Request):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
-            if member["role"] != "admin":
-                raise Forbidden("Admin only.")
+            require_admin(request, ident, member)
             notices = {"approved": "Approved. The account exists now.", "rejected": "Rejected.",
                        "not_pending": "That request is no longer pending.",
                        "full": f"The beta is full ({beta.approved_cap} approved users).",
@@ -498,14 +618,16 @@ def _is_loopback(host: str) -> bool:
 def app_from_env(host: str = "127.0.0.1") -> FastAPI:
     """Build the app from environment variables.
 
-    SAKU_AUTH_MODE   cloudflare (default) or dev
-    SAKU_CF_TEAM     https://<team>.cloudflareaccess.com          (cloudflare mode)
-    SAKU_CF_AUD      Access application AUD tag(s), comma separated (cloudflare mode)
+    SAKU_AUTH_MODE   own (Saku sign-in, production), cloudflare (Access for all of /app, legacy) or dev
+    SAKU_CF_TEAM     https://<team>.cloudflareaccess.com          (own: guards /app/admin; cloudflare: all of /app)
+    SAKU_CF_AUD      Access application AUD tag(s), comma separated
+    SAKU_MAIL        graph (Microsoft Graph sendMail) or outbox (prints codes; loopback/dev only)
+    SAKU_GRAPH_TENANT / SAKU_GRAPH_CLIENT_ID / SAKU_GRAPH_CLIENT_SECRET / SAKU_MAIL_FROM   (SAKU_MAIL=graph)
     SAKU_REGISTRATION   open | closed (default closed)
     SAKU_PENDING_CAP / SAKU_APPROVED_CAP   beta caps (50 / 20)
     SAKU_POLICY_REVIEWED   the reviewed policy version; approvals stay blocked until it equals i18n.POLICY_VERSION
     SAKU_CONTACT     contact address shown in the privacy policy
-    SAKU_SECRET      random string for CSRF tokens               (required in cloudflare mode)
+    SAKU_SECRET      random string, at least 32 characters, for CSRF and sign-in HMACs (required outside dev)
     SAKU_DEV_EMAIL   identity used in dev mode
     SAKU_BOT_USERNAME  Telegram bot username for the Connect Telegram link (optional)
     """
@@ -515,16 +637,33 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
     with connect(url) as c:
         init_schema(c)
     mode = os.environ.get("SAKU_AUTH_MODE", "cloudflare")
+    login, admin_guard, auth = None, None, None
+    local = _is_loopback(host) or os.environ.get("SAKU_DEV_CONTAINER") == "1"
     if mode == "dev":
-        if not _is_loopback(host) and os.environ.get("SAKU_DEV_CONTAINER") != "1":
+        if not local:
             raise SystemExit("dev auth trusts everyone; it only runs on a loopback address")
         auth = DevAuth(os.environ.get("SAKU_DEV_EMAIL", "demo@saku.local"))
         secret = os.environ.get("SAKU_SECRET") or secrets.token_hex(32)
-    elif mode == "cloudflare":
-        auth = CloudflareAccessAuth(os.environ.get("SAKU_CF_TEAM", ""), os.environ.get("SAKU_CF_AUD", ""))
+    elif mode in ("cloudflare", "own"):
         secret = os.environ.get("SAKU_SECRET", "")
         if len(secret) < 32:
-            raise SystemExit("SAKU_SECRET must be at least 32 characters in cloudflare mode")
+            raise SystemExit(f"SAKU_SECRET must be at least 32 characters in {mode} mode")
+        if mode == "cloudflare":
+            auth = CloudflareAccessAuth(os.environ.get("SAKU_CF_TEAM", ""), os.environ.get("SAKU_CF_AUD", ""))
+        else:
+            mail = os.environ.get("SAKU_MAIL", "graph")
+            if mail == "graph":
+                mailer = GraphMailer(os.environ.get("SAKU_GRAPH_TENANT", ""), os.environ.get("SAKU_GRAPH_CLIENT_ID", ""),
+                                     os.environ.get("SAKU_GRAPH_CLIENT_SECRET", ""), os.environ.get("SAKU_MAIL_FROM", ""))
+            elif mail == "outbox" and local:
+                mailer = OutboxMailer(echo=True)
+            else:
+                raise SystemExit("SAKU_MAIL must be graph (outbox only runs on loopback)")
+            login = Login(secret.encode(), mailer)
+            if os.environ.get("SAKU_CF_TEAM"):
+                admin_guard = CloudflareAccessAuth(os.environ["SAKU_CF_TEAM"], os.environ.get("SAKU_CF_AUD", ""))
+            elif not local:
+                raise SystemExit("own mode on a public interface needs SAKU_CF_TEAM/SAKU_CF_AUD to guard /app/admin")
     else:
         raise SystemExit(f"unknown SAKU_AUTH_MODE {mode!r}")
     beta = Beta(registration_open=os.environ.get("SAKU_REGISTRATION", "closed") == "open",
@@ -532,4 +671,5 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
                 approved_cap=int(os.environ.get("SAKU_APPROVED_CAP", "20")),
                 policy_reviewed=os.environ.get("SAKU_POLICY_REVIEWED", ""),
                 contact=os.environ.get("SAKU_CONTACT", ""))
-    return create_app(lambda: connect(url), auth, secret, bot_username=os.environ.get("SAKU_BOT_USERNAME"), beta=beta)
+    return create_app(lambda: connect(url), auth, secret, bot_username=os.environ.get("SAKU_BOT_USERNAME"), beta=beta,
+                      login=login, admin_guard=admin_guard)

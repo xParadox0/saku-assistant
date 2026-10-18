@@ -29,7 +29,12 @@ services:
     command: ["python", "-m", "saku", "serve", "--host", "0.0.0.0", "--port", "8090"]
     environment:
       DATABASE_URL: postgresql://saku:${POSTGRES_PASSWORD}@db:5432/saku
-      SAKU_AUTH_MODE: cloudflare
+      SAKU_AUTH_MODE: ${SAKU_AUTH_MODE:-cloudflare}
+      SAKU_MAIL: ${SAKU_MAIL:-graph}
+      SAKU_GRAPH_TENANT: ${SAKU_GRAPH_TENANT:-}
+      SAKU_GRAPH_CLIENT_ID: ${SAKU_GRAPH_CLIENT_ID:-}
+      SAKU_GRAPH_CLIENT_SECRET: ${SAKU_GRAPH_CLIENT_SECRET:-}
+      SAKU_MAIL_FROM: ${SAKU_MAIL_FROM:-}
       SAKU_CF_TEAM: ${SAKU_CF_TEAM:?set in .env}
       SAKU_CF_AUD: ${SAKU_CF_AUD:?set in .env}
       SAKU_SECRET: ${SAKU_SECRET:?set in .env}
@@ -40,7 +45,7 @@ services:
       SAKU_POLICY_REVIEWED: ${SAKU_POLICY_REVIEWED:-}
       SAKU_CONTACT: ${SAKU_CONTACT:-}
     depends_on: { db: { condition: service_healthy } }
-    networks: [internal, edge, egress]   # egress only to fetch Cloudflare Access signing keys; no published ports
+    networks: [internal, edge, egress]   # egress for Access signing keys and Microsoft Graph mail; no published ports
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]

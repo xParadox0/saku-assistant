@@ -1,0 +1,36 @@
+{% extends "public/base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}{{ t.login_title }} · Saku{% endblock %}
+{% block content %}
+<section class="card signup login rise">
+  <span class="welcome-mark" aria-hidden="true"><img src="/static/brand/saku-mark.svg" alt=""></span>
+  {% if step == 'email' %}
+    <h1>{{ t.login_title }}</h1>
+    <p class="lede small">{{ t.login_lead }}</p>
+    {% if error == 'email' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_email }}</span></p>{% endif %}
+    {% if error == 'limited' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_limited }}</span></p>{% endif %}
+    {% if error == 'mail' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_mail }}</span></p>{% endif %}
+    <form method="post" action="/login" class="signup-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label class="field"><span>{{ t.login_email }}</span>
+        <input type="email" name="email" required maxlength="254" autocomplete="email" inputmode="email" value="{{ email or '' }}" autofocus></label>
+      <div><button type="submit">{{ t.login_send }}</button></div>
+    </form>
+    <p class="hint">{{ t.login_no_password }}</p>
+  {% else %}
+    <h1>{{ t.login_code_title }}</h1>
+    <p class="lede small">{{ t.login_code_lead.format(email=email) }}</p>
+    {% if error == 'code' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_code }}</span></p>{% endif %}
+    <form method="post" action="/login/code" class="signup-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="email" value="{{ email }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label class="field"><span>{{ t.login_code }}</span>
+        <input class="code-input" name="code" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" autofocus></label>
+      <div><button type="submit">{{ t.login_verify }}</button></div>
+    </form>
+    <p class="hint"><a href="/login">{{ t.login_other_email }}</a></p>
+  {% endif %}
+</section>
+{% endblock %}

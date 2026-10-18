@@ -85,10 +85,10 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 - **F9 Recurring and fee detection.** Subscriptions, admin fees and transfer fees, with monthly cost.
 - **F10 Weekly and monthly review** delivered on Telegram.
 - **F11 Data export and delete.** User can export everything and delete everything (UU PDP rights).
-- **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Login through Cloudflare Access by email.
+- **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Login with an email code on Saku's own sign-in page (no password).
 - **F22 Ops page for the admin.** Per-tenant counts, last import, failed imports, component heartbeats. Never shows another tenant's transactions, descriptions, amounts or account names.
 - **F24 Public landing and demo.** A public front page and a read-only demo on synthetic data. No login. No real data, no forms that write.
-- **F25 Self-registration with consent.** A visitor proves an email address (Cloudflare Access one-time code), fills a short form and accepts the privacy policy and terms. The result is a pending request, not an account.
+- **F25 Self-registration with consent.** A visitor proves an email address (a 6-digit code sent by email), fills a short form and accepts the privacy policy and terms. The result is a pending request, not an account.
 - **F26 Owner approval queue.** The owner approves or rejects each request on the ops page. Approval creates the tenant and the member. Pending and rejected users cannot upload, connect Telegram or see any financial page.
 - **F27 Privacy policy and terms pages,** versioned. The accepted version and time are stored per request. Required before the first non-owner approval.
 
@@ -142,8 +142,7 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 | Income suggestions include scams | Allow-list of sources, keyword filter (deposit first, guaranteed return, MLM, pinjol, judi), user report button |
 | Portfolio demo leaks real data | Demo mode refuses real imports; screenshots for LinkedIn are taken in demo mode only |
 | Legal status for multi-user unknown | Approval of anyone except the owner is blocked until PSE registration, UU PDP review and the OJK boundary are confirmed from official sources (Stage 0e). Legal review by a qualified person is recommended; the agent's research is not legal advice |
-| Spam or fake sign-ups | Registration creates only a pending row; a cap on open pending requests; Cloudflare's one-time-code login rate limits per email; the owner reviews every request |
-| Zero Trust seats used up by sign-ups | Every person who completes the Access login consumes a Cloudflare One seat. Seat expiration for inactive users, removing rejected users from the organisation, and a pending cap. The free-plan seat limit is checked before the beta opens |
+| Spam or fake sign-ups | Registration creates only a pending row; a cap on open pending requests; sign-in codes are rate limited per email and per IP; the owner reviews every request |
 | Public pages widen the attack surface | Public routes read only the synthetic demo tenant; the app under the protected path still verifies the Access JWT itself; CSP without scripts; tests that public pages contain no other tenant's data |
 | Users trust the beta with data before the legal basis is clear | Stage 0e gate; the waiting page and the privacy policy state that this is a closed beta run by one person |
 
@@ -164,8 +163,8 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 - Public repository under MIT license.
 - F15 income scope for v1: freelance and job openings only. Local side work is out of scope for now.
 - A web dashboard is part of v1 (F21, F22), for both the user's money picture and an admin ops view. The first management function is accounts and statement upload; budgets and categories follow later (F23).
-- The real-data dashboard is reachable only through Cloudflare Access with email login. The origin listens on 127.0.0.1 and has no open port.
+- The real-data dashboard needs a Saku sign-in (email code); the ops page additionally sits behind Cloudflare Access. The origin listens on 127.0.0.1 and has no open port.
 - 2026-10-18: public pages and the registration flow are in English with a switch to Indonesian. The dashboard itself stays English for now.
 - 2026-10-18: beta caps are 20 approved users and 50 open pending requests.
 - 2026-10-18: the owner and a legal consultant review the privacy policy and terms. Approving anyone except the owner stays blocked in code until the reviewed version is configured.
-- 2026-10-18: closed beta. The site is public; anyone may register; access to the app needs owner approval. This replaces the v0.1 non-goal "no public multi-user launch". Login stays with Cloudflare Access one-time codes, so Saku stores no passwords.
+- 2026-10-18: closed beta. The site is public; anyone may register; access to the app needs owner approval. This replaces the v0.1 non-goal "no public multi-user launch". Login was first Cloudflare Access one-time codes. Replaced the same day by Saku's own email-code login so the sign-in page is on Saku's domain and sign-ups use no third-party seats; Saku still stores no passwords.

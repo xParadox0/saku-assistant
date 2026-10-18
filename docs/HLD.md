@@ -42,7 +42,7 @@ Each principle can veto a later design choice.
 ### 3.1 Bot
 - Dedicated Telegram bot for this project. The token lives only in the deployment `.env` (mode 600) and is never committed.
 - Telegram Bot API, long polling (no public webhook needed in v1).
-- Link-first. The web account (email verified by Cloudflare Access) is the root identity. The bot trusts a Telegram user only after the member redeems a one-time code from Settings > Connect Telegram, sent as a `t.me/<bot>?start=<code>` deep link.
+- Link-first. The web account (email verified at sign-in, 3.11) is the root identity. The bot trusts a Telegram user only after the member redeems a one-time code from Settings > Connect Telegram, sent as a `t.me/<bot>?start=<code>` deep link.
   - Codes: 144-bit random, single use, 10 minutes, stored only as SHA-256, a new code cancels older ones.
   - `telegram_link` maps the numeric Telegram user id (never the username) to one member and tenant. One Telegram account per member; linking a new one replaces the old.
   - A Telegram account already linked to another member cannot be taken over with a new code.
@@ -227,7 +227,7 @@ CREATE TABLE heartbeat (
 );
 
 CREATE TABLE member (
-    email       TEXT PRIMARY KEY,                -- verified by Cloudflare Access, stored lowercase
+    email       TEXT PRIMARY KEY,                -- verified at sign-in, stored lowercase
     tenant_id   TEXT NOT NULL REFERENCES tenant(id),
     role        TEXT NOT NULL                    -- user | admin; admin sees ops metadata, never other tenants' rows
 );
@@ -250,13 +250,14 @@ Server-rendered pages (FastAPI + Jinja2), no JavaScript. The page Content-Securi
 Identity and access:
 
 ```text
-Browser ──▶ Cloudflare Access (email login) ──▶ Cloudflare Tunnel ──▶ 127.0.0.1:8090 (dashboard)
+Browser ──▶ Cloudflare Tunnel ──▶ dashboard container (no published port)
+             /app/admin also passes Cloudflare Access first
 ```
 
-Since v0.2 the app lives under `/app` and the public pages under `/` (see 3.10).
+Since v0.2 the app lives under `/app` and the public pages under `/` (see 3.10). Since 2026-10-18 sign-in is Saku's own (3.11); the paragraph below describes the Access JWT check that still guards `/app/admin`.
 
-- Identity comes only from the `Cf-Access-Jwt-Assertion` JWT. The dashboard verifies its RS256 signature against the team's published keys, plus `aud`, `iss` and `exp`. The unsigned `Cf-Access-Authenticated-User-Email` header is ignored, and a test checks that it alone gets a 401.
-- The verified email is looked up in the `member` table, which maps it to one tenant and a role (`user` or `admin`). An email that passed Access but is not a member gets 403. Access decides who may reach the site; `member` decides what they see.
+- On `/app/admin`, the Access identity comes only from the `Cf-Access-Jwt-Assertion` JWT. The dashboard verifies its RS256 signature against the team's published keys, plus `aud`, `iss` and `exp`. The unsigned `Cf-Access-Authenticated-User-Email` header is ignored, and a test checks that it alone gets a 401.
+- The verified email is looked up in the `member` table, which maps it to one tenant and a role (`user` or `admin`). A signed-in email that is not a member sees only the registration flow. Sign-in proves the address; `member` decides what it sees.
 - Every POST carries an HMAC token bound to the user's email. A token from another user is rejected.
 - Uploads: 5 MB limit, written to a private temp directory, parsed, then the directory is deleted. Only the SHA-256 of the file is stored. A failed parse is recorded as a failed batch with a message that never contains row contents.
 - The admin page uses separate repository methods that return counts, statuses and timestamps only. A test asserts that descriptions, amounts and account labels of other tenants never appear on it.
@@ -272,22 +273,21 @@ The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so
 /demo            read-only demo, synthetic data   no login, no forms
 /privacy /terms  versioned policy pages           no login
 /healthz         liveness                         no login, no data
-/app/...         the dashboard from 3.9           Access app A: any email may log in (one-time code)
-/app/admin...    ops page and approval queue      Access app B: owner email only (stricter, more specific path)
+/app/...         the dashboard from 3.9           Saku session (3.11)
+/app/admin...    ops page and approval queue      Saku session with role admin + Access app, owner email only
 ```
 
-- Cloudflare Access protects only `/app`. Path rules are matched most-specific first, so `/app/admin` gets its own stricter application. Each Access application has its own AUD tag; the dashboard accepts the JWT only if its `aud` is one of the configured tags, and the admin routes still check `role = admin` in the database.
-- Passing Access proves control of an email address and nothing more. The `member` table still decides access: a verified email that is not a member sees only the registration form or its waiting page.
+- Sign-in is Saku's own email-code login (3.11). Cloudflare Access protects only `/app/admin`, and the admin routes also check `role = admin` in the database.
+- Signing in proves control of an email address and nothing more. The `member` table still decides access: a verified email that is not a member sees only the registration form or its waiting page.
 - Public routes read only the demo tenant. They have no forms that write. The only cookie is `saku_lang` (en or id), a functional preference set by the language switch.
 - Two switches guard the beta in code. `SAKU_REGISTRATION=open` is needed before the form accepts anything; the default is closed. `SAKU_POLICY_REVIEWED` must equal the current policy version before approve works for anyone; until then the approval endpoint refuses.
-- While registration is closed, the `/app` Access policy keeps listing the owner only, so no stranger uses a seat. Opening registration is one change: the `/app` policy include becomes everyone.
+- While registration is closed, only members and existing requests receive a sign-in code. Opening registration is one switch.
 - Registration writes one `signup` row. Approval, in one transaction, creates the tenant, the member and marks the request approved. Rejection records who and when; the row is kept as the consent record.
 - Open pending requests are capped (`SAKU_PENDING_CAP`). Over the cap the form says registration is paused and stores nothing.
-- Every Access login uses a Cloudflare One seat. Rejected users are removed from the Zero Trust organisation and seat expiration is enabled for inactive users.
 
 ```sql
 CREATE TABLE signup (
-    email           TEXT PRIMARY KEY CHECK (email = lower(email)), -- from the verified Access JWT, never from the form
+    email           TEXT PRIMARY KEY CHECK (email = lower(email)), -- from the signed-in session, never from the form
     display_name    TEXT NOT NULL,                  -- what the owner sees in the queue; 1 to 60 characters
     note            TEXT,                           -- optional: why they want to try it; max 300 characters
     consent_version TEXT NOT NULL,                  -- privacy + terms version accepted, e.g. 2026-10-18
@@ -300,6 +300,62 @@ CREATE TABLE signup (
 ```
 
 Tenant ids for new users are random (`t_` + 12 hex characters), never derived from the email, so a tenant id in a log does not identify a person.
+
+### 3.11 Sign-in (own login, email code)
+
+Decided 2026-10-18. The site is public and people register, so the sign-in page has to be Saku's own and must not depend on a per-user seat in someone else's product. Cloudflare Access stays only in front of `/app/admin`, as a second lock for the owner.
+
+```text
+/login         email form; always answers the same way
+/login/code    6-digit code form
+/logout        POST, ends the session
+/app/...       needs a Saku session
+/app/admin...  needs a Saku session with role admin AND a valid Access JWT for the same email
+```
+
+Flow:
+1. The visitor enters an email on `/login`. The response is the same for every address: "if this address can sign in, a code is on its way".
+2. A code is sent only when the address is a member, has an open or decided request, or registration is open. Otherwise nothing is sent and no code row is stored.
+3. The code is 6 digits, valid 10 minutes, single use. Only an HMAC of it is stored. A new code cancels older unused ones for that address.
+4. The browser keeps a short signed cookie that says which address is waiting for a code. It holds no secret.
+5. A correct code creates a session. The session token is 32 random bytes in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. The database stores only its SHA-256.
+6. Sessions end after 30 days, or after 7 days without use, or on sign out. The server can revoke any session.
+
+Limits, all counted per HMAC of the email and per HMAC of the client IP (Cloudflare's `CF-Connecting-IP`; the origin is only reachable through the tunnel):
+- 5 code requests per email per hour, 20 per IP per hour. Counted for every address, so hitting the limit says nothing about whether an address has an account.
+- 5 wrong tries per code; 10 wrong tries per email per hour, 50 per IP per hour.
+- Rate-limit records keep only the two HMACs and a time, and are deleted after 24 hours.
+
+Mail goes out through Microsoft Graph `sendMail` from one mailbox of the owner's Microsoft 365 tenant (app-only, client credentials). The app registration is limited to that mailbox with an Exchange application access policy, so the credential cannot send as anyone else. If sending fails, the page says so and no session is created.
+
+Forms on `/login` carry a CSRF token tied to a random pre-login cookie, so another site cannot sign a visitor in to the attacker's account.
+
+```sql
+CREATE TABLE login_code (
+    id          BIGSERIAL PRIMARY KEY,
+    email       TEXT NOT NULL,          -- lowercase
+    code_hmac   TEXT NOT NULL,          -- HMAC(secret, salt | email | code); the code itself is never stored
+    salt        TEXT NOT NULL,
+    attempts    INT NOT NULL DEFAULT 0, -- wrong tries on this code; dead at 5
+    expires_at  TIMESTAMPTZ NOT NULL,   -- 10 minutes
+    used_at     TIMESTAMPTZ,            -- single use; also set when a newer code replaces it
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE web_session (
+    sid_sha256 TEXT PRIMARY KEY,      -- the token itself lives only in the browser cookie
+    email        TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ NOT NULL,  -- 30 days
+    revoked_at   TIMESTAMPTZ
+);
+CREATE TABLE login_event (
+    kind        TEXT NOT NULL CHECK (kind IN ('request', 'fail')),
+    email_hmac  TEXT NOT NULL,
+    ip_hmac     TEXT NOT NULL,
+    at          TIMESTAMPTZ NOT NULL DEFAULT now()  -- deleted after 24 hours
+);
+```
 
 ## 4. Main flows
 
@@ -316,7 +372,7 @@ See 3.5. The 48-hour follow-up is a scheduler job keyed on `wishlist.remind_at`.
 
 ### 4.3 Registration and approval
 1. A visitor opens `/`, reads, optionally opens `/demo`, presses Register.
-2. Cloudflare Access asks for an email and sends a one-time code. The visitor enters it and reaches `/app`.
+2. `/login` asks for an email and sends a 6-digit code (3.11). The visitor enters it and reaches `/app`.
 3. The app sees a verified email with no member row and no signup row, and shows the registration form.
 4. The visitor submits a display name, an optional note and the consent checkbox. One `signup` row is stored as `pending`.
 5. Any later visit shows the waiting page. Uploads, Telegram linking and every financial page return 403 for that email.
@@ -345,7 +401,8 @@ What can go wrong, and what happens then:
 | SQL computes, model phrases | Hallucinated amounts destroy trust in a finance tool | Model reads tables and answers: untestable numbers |
 | PostgreSQL in the project's own container | Decided 2026-10-17. A cloned repo runs with one `docker compose up`; NUMERIC money type; tenant filtering | A shared database on other infrastructure: couples a public project to private systems. SQLite: fine for one user, weak for the multi-user path |
 | Closed beta with owner approval | Decided 2026-10-18. Lets real people ask from LinkedIn while one person can still review every account and the legal checks finish | Open self-service sign-up: no review of who stores financial data on a personal server before the legal basis is clear |
-| Cloudflare Access one-time codes as the login | No password storage, no reset flow, no email sender to run; Access already guards the site | Own email and password login: hashing, verification and reset mail, rate limiting and a larger attack surface; revisit for an open launch |
+| Own email-code login, Access only on `/app/admin` | Decided 2026-10-18. A public sign-up needs a sign-in page on Saku's own domain, and no per-user seat in a third-party product. Codes by email keep the no-password property | Cloudflare Access for everyone: login page on a cloudflareaccess.com domain and one seat per person who ever signs in. Email and password: password storage, reset mail and credential stuffing to defend |
+| Login mail through Microsoft Graph from the owner's tenant | Decided 2026-10-18. No new processor of users' email addresses; the domain already sends through Microsoft 365 | A transactional mail service: quicker set-up, but one more company handling user data. SMTP with a mailbox password: a password on the server and a protocol Microsoft is phasing out |
 | A request is not an account | Approval is the only code path that creates a tenant, so a bug in registration cannot hand out data access | Create the tenant at registration and flag it pending: every query would need a pending check, and one forgotten check leaks |
 | Build, informed by references | Indonesia-specific parsers and proactive features are the gap | Adopt Actual Budget or Firefly III: good ledgers, but the proactive layer and Indonesian sources would still be built; their schemas are used as reference only, no code copied |
 
@@ -353,7 +410,7 @@ What can go wrong, and what happens then:
 
 - Open self-service sign-up without approval, billing, quotas.
 - Email notifications to applicants about a decision (they see the status when they log in).
-- Removing rejected users from the Zero Trust organisation automatically; done by hand in v1.
+- Passkeys as a second way to sign in.
 - Budgets, goals, wishlist and category management in the dashboard (F23).
 - Licensed aggregator integration (F20).
 - Multi-currency rates (F19).
@@ -374,6 +431,9 @@ Stage 0c Deploy the dashboard behind Cloudflare Access on a subdomain, origin on
 Stage 0d Closed beta plumbing: public landing, /demo, app moved under /app, registration form,
          signup table, approval queue, Access apps for /app (any email) and /app/admin (owner)
          nobody except the owner is approved in this stage
+Stage 0f Own sign-in: /login with email code, sessions, rate limits, mail through Microsoft Graph;
+         Access kept only on /app/admin
+         no passkeys, no password
 Stage 0e Beta gate: privacy policy and terms (versioned), export and delete (F11),
          PSE / UU PDP / OJK check recorded with sources, seat limit and seat expiration checked
          only after this stage may the owner approve another person
@@ -410,6 +470,11 @@ Stage 0d without an Access session /app shows the Access login while / and /demo
          financial page; a JWT whose aud belongs to neither Access app gets 401; a user-role member
          gets 403 on /app/admin and on approve; consent unchecked stores nothing; over the pending
          cap stores nothing; approve creates exactly one tenant and one member
+Stage 0f a wrong code 5 times kills the code; a used or expired code fails; the 6th code request
+         in an hour sends nothing; /login answers the same for a member, a stranger and a limited
+         address; no row holds a plain code or session token; a session cookie from a revoked or
+         expired session gets the login page; /app/admin without the Access JWT gets 401 even with
+         an admin session; a login form posted from another origin is refused
 Stage 0e export returns every row of the tenant and nothing of another; delete leaves 0 rows for the
          tenant in every table and removes the Telegram link; the accepted policy version is stored
 Stage 1  import a real statement; rows_in = rows_new + rows_dup; re-import the same file

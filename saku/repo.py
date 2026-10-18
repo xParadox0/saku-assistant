@@ -520,6 +520,73 @@ class Repo:
         return [dict(zip(keys, r)) for r in cur.fetchall()]
 
 
+    # ---- own sign-in (HLD 3.11) -----------------------------------------------------------------------
+    # Cross-tenant by design, like member(): sign-in happens before a tenant is known. Only HMACs and hashes.
+    def login_events(self, kind: str, email_hmac: str, ip_hmac: str, window_s: int) -> tuple[int, int]:
+        row = self.c.execute(
+            "SELECT COUNT(*) FILTER (WHERE email_hmac = %s), COUNT(*) FILTER (WHERE ip_hmac = %s) FROM login_event "
+            "WHERE kind = %s AND at > now() - make_interval(secs => %s)", (email_hmac, ip_hmac, kind, window_s)).fetchone()
+        return int(row[0]), int(row[1])
+
+    def login_event_add(self, kind: str, email_hmac: str, ip_hmac: str) -> None:
+        self.c.execute("INSERT INTO login_event (kind, email_hmac, ip_hmac) VALUES (%s, %s, %s)", (kind, email_hmac, ip_hmac))
+        self.c.execute("DELETE FROM login_event WHERE at < now() - interval '24 hours'")
+
+    def login_code_new(self, email: str, code_hmac: str, salt: str, ttl_s: int) -> None:
+        """A new code cancels every older unused code for the address."""
+        email = email.strip().lower()
+        with self.c.transaction():
+            self.c.execute("UPDATE login_code SET used_at = now() WHERE email = %s AND used_at IS NULL", (email,))
+            self.c.execute("INSERT INTO login_code (email, code_hmac, salt, expires_at) "
+                           "VALUES (%s, %s, %s, now() + make_interval(secs => %s))", (email, code_hmac, salt, ttl_s))
+            self.c.execute("DELETE FROM login_code WHERE created_at < now() - interval '2 days'")
+
+    def login_code_live(self, email: str) -> dict | None:
+        """The one code that may still be redeemed: unused, unexpired, fewer than the allowed wrong tries."""
+        row = self.c.execute(
+            "SELECT id, code_hmac, salt, attempts FROM login_code WHERE email = %s AND used_at IS NULL "
+            "AND expires_at > now() ORDER BY created_at DESC LIMIT 1", (email.strip().lower(),)).fetchone()
+        return {"id": row[0], "code_hmac": row[1], "salt": row[2], "attempts": row[3]} if row else None
+
+    def login_code_fail(self, code_id: int, max_attempts: int) -> None:
+        self.c.execute("UPDATE login_code SET attempts = attempts + 1, "
+                       "used_at = CASE WHEN attempts + 1 >= %s THEN now() ELSE used_at END WHERE id = %s",
+                       (max_attempts, code_id))
+
+    def login_code_use(self, code_id: int) -> bool:
+        """Single use, race safe: only one request can flip used_at."""
+        cur = self.c.execute("UPDATE login_code SET used_at = now() WHERE id = %s AND used_at IS NULL "
+                             "AND expires_at > now()", (code_id,))
+        return cur.rowcount == 1
+
+    def may_sign_in(self, email: str) -> bool:
+        """A member, or an address with a registration request in any state."""
+        return self.c.execute("SELECT EXISTS (SELECT 1 FROM member WHERE email = %s) "
+                              "OR EXISTS (SELECT 1 FROM signup WHERE email = %s)",
+                              (email, email)).fetchone()[0]
+
+    def session_new(self, sid_sha256: str, email: str, ttl_s: int) -> None:
+        self.c.execute("INSERT INTO web_session (sid_sha256, email, expires_at) "
+                       "VALUES (%s, %s, now() + make_interval(secs => %s))", (sid_sha256, email.strip().lower(), ttl_s))
+        self.c.execute("DELETE FROM web_session WHERE expires_at < now() - interval '7 days'")
+
+    def session_email(self, sid_sha256: str, idle_s: int) -> str | None:
+        """Email of a live session, sliding last_seen. Expired, idle or revoked sessions return None."""
+        row = self.c.execute(
+            "UPDATE web_session SET last_seen = now() WHERE sid_sha256 = %s AND revoked_at IS NULL "
+            "AND expires_at > now() AND last_seen > now() - make_interval(secs => %s) RETURNING email",
+            (sid_sha256, idle_s)).fetchone()
+        return row[0] if row else None
+
+    def session_revoke(self, sid_sha256: str) -> None:
+        self.c.execute("UPDATE web_session SET revoked_at = now() WHERE sid_sha256 = %s AND revoked_at IS NULL",
+                       (sid_sha256,))
+
+    def sessions_revoke_all(self, email: str) -> int:
+        return self.c.execute("UPDATE web_session SET revoked_at = now() WHERE email = %s AND revoked_at IS NULL",
+                              (email.strip().lower(),)).rowcount
+
+
 def _sha(code: str) -> str:
     import hashlib
     return hashlib.sha256(code.encode()).hexdigest()

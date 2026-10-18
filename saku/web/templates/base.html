@@ -32,6 +32,7 @@
     <div class="side-foot">
       <div class="promise">{{ icon('i-shield') }}<p>Read-only. Saku never asks for bank logins, PINs or OTPs.</p></div>
       <div class="who"><span class="avatar" aria-hidden="true">{{ email[0]|upper }}</span><span><b>{{ email }}</b>{{ 'Admin' if role == 'admin' else 'Member' }}</span></div>
+      {% if own_login %}<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="linklike">Sign out</button></form>{% endif %}
       <p class="byline">Built by <a href="https://github.com/xParadox0/saku-assistant" rel="noopener">Yona Surya</a></p>
     </div>
     {% endif %}

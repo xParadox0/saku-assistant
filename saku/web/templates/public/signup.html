@@ -30,6 +30,8 @@
     <span class="welcome-mark">{{ icon('i-x') }}</span>
     <h1>{{ t.rejected_title }}</h1><p class="lede">{{ t.rejected_body }}</p>
   {% endif %}
-  <p class="hint"><a href="/cdn-cgi/access/logout">{{ t.signout }}</a></p>
+  {% if own_login %}
+  <form method="post" action="/logout" class="hint"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="linklike">{{ t.signout }}</button></form>
+  {% else %}<p class="hint"><a href="/cdn-cgi/access/logout">{{ t.signout }}</a></p>{% endif %}
 </section>
 {% endblock %}

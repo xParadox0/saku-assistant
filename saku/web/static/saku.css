@@ -505,3 +505,9 @@ textarea:focus { border-color: var(--accent); outline: none; }
   .band { padding: 48px 0; }
   .pub-split .card { padding: 24px 20px; }
 }
+
+/* ---- sign-in -------------------------------------------------------------------------------------- */
+.login { max-width: 480px; }
+.code-input { font: 900 28px/1 var(--display); letter-spacing: .3em; text-align: center; padding: 14px; }
+button.linklike { background: none; color: var(--muted); padding: 0 4px; min-height: 0; font: 600 13px var(--text); text-decoration: underline; text-underline-offset: 3px; }
+button.linklike:hover { background: none; color: var(--ink); }
