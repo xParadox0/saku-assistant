@@ -85,25 +85,38 @@
 
 <section class="card" id="add">
   <div class="card-head"><h2>Add an account</h2></div>
-  <form method="post" action="/app/accounts" class="grid-form">
+  <form method="post" action="/app/accounts" class="grid-form account-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <fieldset class="kind-pick wide">
+    <fieldset class="kind-pick account-kind">
       <legend>Type</legend>
       {% for k in kinds %}
       <label><input type="radio" name="kind" value="{{ k }}" {% if loop.first %}checked{% endif %}><span>{{ acct_icon(k) }}{{ {'bank': 'Bank', 'ewallet': 'E-wallet', 'cash': 'Cash'}.get(k, k|title) }}</span></label>
       {% endfor %}
     </fieldset>
-    <label class="field provider-field"><span>Search provider</span>
-      <input type="search" name="provider" list="providers" required pattern="[a-z0-9_]{2,30}"
-             autocomplete="off" placeholder="Search bank or e-wallet">
-      <datalist id="providers">{% for value, label in providers %}<option value="{{ value }}" label="{{ label }}">{{ label }}</option>{% endfor %}</datalist>
-      <small>Start typing, then choose a bank or e-wallet.</small></label>
-    <label class="field"><span>Last 4 digits, optional</span>
-      <input type="number" name="last4" inputmode="numeric" min="0" max="9999" step="1" placeholder="1234"></label>
-    <label class="field wide"><span>Name shown in Saku</span>
+    <div class="field provider-field">
+      <label for="provider-search">Search provider</label>
+      <div class="provider-combobox" data-provider-combobox>
+        <input id="provider-search" type="search" name="provider" required maxlength="30" autocomplete="off"
+               placeholder="Search bank" role="combobox" aria-autocomplete="list" aria-controls="provider-options" aria-expanded="false">
+        <div id="provider-options" class="provider-options" role="listbox" hidden>
+          {% for value, label, kind in providers %}
+          <button type="button" class="provider-option" role="option" data-provider="{{ value }}" data-label="{{ label|lower }}" data-kind="{{ kind }}">
+            <span>{{ label }}</span><small>{{ {'bank':'Bank','ewallet':'E-wallet','cash':'Cash'}[kind] }}</small>
+          </button>
+          {% endfor %}
+          <p class="provider-empty" data-provider-empty hidden>No matching provider. You can use the name you typed.</p>
+        </div>
+      </div>
+      <small data-provider-help>Only bank providers are shown.</small>
+    </div>
+    <label class="field last4-field"><span>Last 4 digits, optional</span>
+      <input type="number" name="last4" inputmode="numeric" min="0" max="9999" step="1" placeholder="1234">
+      <small>Exactly 4 digits when provided.</small></label>
+    <label class="field name-field"><span>Name shown in Saku</span>
       <input name="label" required maxlength="60" placeholder="Daily spending"></label>
-    <div><button type="submit">{{ icon('i-plus') }}Add account</button></div>
+    <div class="add-submit"><button type="submit">{{ icon('i-plus') }}Add account</button></div>
   </form>
   <p class="hint">{{ icon('i-shield') }} Only the last 4 digits are kept. Never enter a full account number, password, PIN or OTP.</p>
 </section>
 {% endblock %}
+{% block scripts %}<script src="/static/accounts.js" defer></script>{% endblock %}

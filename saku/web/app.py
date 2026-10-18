@@ -45,16 +45,17 @@ DEMO_TENANT = "demo"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 PROVIDER_SUGGESTIONS = [
-    ("bca", "BCA · Bank"), ("bri", "BRI · Bank"), ("bni", "BNI · Bank"),
-    ("mandiri", "Mandiri · Bank"), ("btn", "BTN · Bank"), ("cimb", "CIMB Niaga · Bank"),
-    ("permata", "PermataBank · Bank"), ("danamon", "Danamon · Bank"), ("ocbc", "OCBC · Bank"),
-    ("uob", "UOB · Bank"), ("jago", "Bank Jago · Bank"), ("seabank", "SeaBank · Bank"),
-    ("blu", "blu by BCA Digital · Bank"), ("jenius", "Jenius · Bank"),
-    ("gopay", "GoPay · E-wallet"), ("ovo", "OVO · E-wallet"), ("dana", "DANA · E-wallet"),
-    ("shopeepay", "ShopeePay · E-wallet"), ("linkaja", "LinkAja · E-wallet"),
-    ("isaku", "iSaku · E-wallet"), ("sakuku", "Sakuku · E-wallet"),
-    ("astrapay", "AstraPay · E-wallet"), ("doku", "DOKU · E-wallet"),
-    ("cash", "Cash"), ("other", "Other"),
+    ("bca", "BCA", "bank"), ("bri", "BRI", "bank"), ("bni", "BNI", "bank"),
+    ("mandiri", "Mandiri", "bank"), ("btn", "BTN", "bank"), ("cimb", "CIMB Niaga", "bank"),
+    ("permata", "PermataBank", "bank"), ("danamon", "Danamon", "bank"), ("ocbc", "OCBC", "bank"),
+    ("uob", "UOB", "bank"), ("jago", "Bank Jago", "bank"), ("seabank", "SeaBank", "bank"),
+    ("blu", "blu by BCA Digital", "bank"), ("jenius", "Jenius", "bank"),
+    ("gopay", "GoPay", "ewallet"), ("ovo", "OVO", "ewallet"), ("dana", "DANA", "ewallet"),
+    ("shopeepay", "ShopeePay", "ewallet"), ("linkaja", "LinkAja", "ewallet"),
+    ("isaku", "iSaku", "ewallet"), ("sakuku", "Sakuku", "ewallet"),
+    ("astrapay", "AstraPay", "ewallet"), ("doku", "DOKU", "ewallet"),
+    ("cash", "Cash", "cash"), ("other_bank", "Other bank", "bank"),
+    ("other_ewallet", "Other e-wallet", "ewallet"),
 ]
 CSV_TEMPLATE = "date,amount,description,kind\n2026-07-01,15000000,SALARY,normal\n2026-07-02,-45000,LUNCH,normal\n2026-07-28,-15000,ADMIN FEE,fee\n"
 
@@ -189,8 +190,9 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     @app.middleware("http")
     async def headers(request: Request, call_next):
         resp: Response = await call_next(request)
+        scripts = "'self'" if request.url.path == "/app/accounts" else "'none'"
         resp.headers["Content-Security-Policy"] = ("default-src 'self'; img-src 'self' data:; style-src 'self'; "
-                                                   "script-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+                                                   f"script-src {scripts}; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
         resp.headers["X-Frame-Options"] = "DENY"

@@ -150,6 +150,10 @@ def test_full_account_number_rejected_by_form(client):
 def test_accounts_form_has_searchable_provider_numeric_last4_and_ewallets(client):
     page = client.get("/app/accounts", headers=as_("alice@example.com")).text
     assert 'type="search" name="provider"' in page
+    assert "<datalist" not in page
+    assert 'role="listbox"' in page and 'data-kind="bank"' in page and 'data-kind="ewallet"' in page
+    assert '<script src="/static/accounts.js" defer></script>' in page
+    assert 'class="grid-form account-form"' in page
     assert 'type="number" name="last4"' in page
     for provider in ("GoPay", "OVO", "DANA", "ShopeePay", "LinkAja"):
         assert provider in page
@@ -204,6 +208,11 @@ def test_security_headers(client):
     r = client.get("/app", headers=as_("alice@example.com"))
     assert "script-src 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-frame-options"] == "DENY" and r.headers["cache-control"] == "no-store"
+    accounts = client.get("/app/accounts", headers=as_("alice@example.com"))
+    assert "script-src 'self'" in accounts.headers["content-security-policy"]
+    assert "unsafe-inline" not in accounts.headers["content-security-policy"]
+    script = client.get("/static/accounts.js")
+    assert script.status_code == 200 and "provider-options" in script.text
 
 
 def test_demo_tenant_renders(conn, db_url):
