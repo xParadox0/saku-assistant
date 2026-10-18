@@ -1,6 +1,6 @@
 # HLD: Personal Finance Assistant (working name "Saku")
 
-Status: DRAFT v0.1, 2026-10-17. Implements `docs/PRD.md` v0.1. Requirement IDs (F1..F21) refer to the PRD.
+Status: DRAFT v0.2, 2026-10-18. Implements `docs/PRD.md` v0.2. Requirement IDs (F1..F27) refer to the PRD.
 
 ## 1. Binding principles
 
@@ -9,7 +9,7 @@ Each principle can veto a later design choice.
 1. **Read-only on money.** Nothing in the system can move money or log in to a bank. No credential field exists in the schema, so none can be filled by mistake.
 2. **No number without a source.** SQL computes every figure. The model receives query results and phrases them. A reply containing an amount that is not in the query result is a bug, and a test checks for it.
 3. **Silence is a bug.** Every ingest path and scheduler records a heartbeat. A stale heartbeat produces a message to the user. A dead component must look different from a quiet month.
-4. **Designed for many, opened to one.** `tenant_id` everywhere and one data-access layer from day one. Registration, billing and a public UI are deferred.
+4. **Designed for many, opened by approval.** `tenant_id` everywhere and one data-access layer from day one. Anyone may ask for an account; only the owner creates one. A request is not an account and grants nothing.
 
 ## 2. System diagram
 
@@ -253,6 +253,8 @@ Identity and access:
 Browser ──▶ Cloudflare Access (email login) ──▶ Cloudflare Tunnel ──▶ 127.0.0.1:8090 (dashboard)
 ```
 
+Since v0.2 the app lives under `/app` and the public pages under `/` (see 3.10).
+
 - Identity comes only from the `Cf-Access-Jwt-Assertion` JWT. The dashboard verifies its RS256 signature against the team's published keys, plus `aud`, `iss` and `exp`. The unsigned `Cf-Access-Authenticated-User-Email` header is ignored, and a test checks that it alone gets a 401.
 - The verified email is looked up in the `member` table, which maps it to one tenant and a role (`user` or `admin`). An email that passed Access but is not a member gets 403. Access decides who may reach the site; `member` decides what they see.
 - Every POST carries an HMAC token bound to the user's email. A token from another user is rejected.
@@ -262,6 +264,40 @@ Browser ──▶ Cloudflare Access (email login) ──▶ Cloudflare Tunnel �
 - Dev mode (fixed demo identity) refuses to start on a non-loopback address, except inside the demo container whose host port is bound to loopback.
 
 The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so any account can be imported before its bank-specific parser exists. Bank-specific PDF and CSV parsers are added in Stage 1.
+
+### 3.10 Closed beta: public pages, registration, approval (F24 to F27)
+
+```text
+/                public landing                  no login
+/demo            read-only demo, synthetic data   no login, no forms
+/privacy /terms  versioned policy pages           no login
+/healthz         liveness                         no login, no data
+/app/...         the dashboard from 3.9           Access app A: any email may log in (one-time code)
+/app/admin...    ops page and approval queue      Access app B: owner email only (stricter, more specific path)
+```
+
+- Cloudflare Access protects only `/app`. Path rules are matched most-specific first, so `/app/admin` gets its own stricter application. Each Access application has its own AUD tag; the dashboard accepts the JWT only if its `aud` is one of the configured tags, and the admin routes still check `role = admin` in the database.
+- Passing Access proves control of an email address and nothing more. The `member` table still decides access: a verified email that is not a member sees only the registration form or its waiting page.
+- Public routes read only the demo tenant through a dedicated read method. They have no forms that write and set no cookies.
+- Registration writes one `signup` row. Approval, in one transaction, creates the tenant, the member and marks the request approved. Rejection records who and when; the row is kept as the consent record.
+- Open pending requests are capped (`SAKU_PENDING_CAP`). Over the cap the form says registration is paused and stores nothing.
+- Every Access login uses a Cloudflare One seat. Rejected users are removed from the Zero Trust organisation and seat expiration is enabled for inactive users.
+
+```sql
+CREATE TABLE signup (
+    email           TEXT PRIMARY KEY CHECK (email = lower(email)), -- from the verified Access JWT, never from the form
+    display_name    TEXT NOT NULL,                  -- what the owner sees in the queue; 1 to 60 characters
+    note            TEXT,                           -- optional: why they want to try it; max 300 characters
+    consent_version TEXT NOT NULL,                  -- privacy + terms version accepted, e.g. 2026-10-18
+    consent_at      TIMESTAMPTZ NOT NULL,           -- when they accepted; kept after approval as the consent record
+    status          TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+    decided_at      TIMESTAMPTZ,                    -- request to decision is the queue latency
+    decided_by      TEXT,                           -- the admin email that decided
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Tenant ids for new users are random (`t_` + 12 hex characters), never derived from the email, so a tenant id in a log does not identify a person.
 
 ## 4. Main flows
 
@@ -276,7 +312,22 @@ The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so
 ### 4.2 Purchase check
 See 3.5. The 48-hour follow-up is a scheduler job keyed on `wishlist.remind_at`.
 
-### 4.3 Failure flow
+### 4.3 Registration and approval
+1. A visitor opens `/`, reads, optionally opens `/demo`, presses Register.
+2. Cloudflare Access asks for an email and sends a one-time code. The visitor enters it and reaches `/app`.
+3. The app sees a verified email with no member row and no signup row, and shows the registration form.
+4. The visitor submits a display name, an optional note and the consent checkbox. One `signup` row is stored as `pending`.
+5. Any later visit shows the waiting page. Uploads, Telegram linking and every financial page return 403 for that email.
+6. The owner opens `/app/admin`, sees the queue, approves. One transaction creates `tenant`, `member` (role `user`) and sets `signup.status = 'approved'`.
+7. The next visit by that email lands on the first-run welcome page.
+
+What can go wrong, and what happens then:
+- A form without consent is refused with nothing stored.
+- Over the pending cap the form is closed and nothing is stored.
+- A second submission from the same email updates nothing.
+- Approving a request that is no longer pending does nothing.
+
+### 4.4 Failure flow
 - Parser exception: batch `status='failed'`, error saved, the user is told the file name and that nothing was imported. A partial parse is never committed as complete.
 - Mail reader cannot authenticate: heartbeat stops updating. The next scheduler run sees a heartbeat older than 24 hours and messages the user.
 - Model API down: categorisation falls back to rules plus `needs_review`, and replies fall back to templates. Numbers still come from SQL, so reviews still go out.
@@ -291,11 +342,16 @@ See 3.5. The 48-hour follow-up is a scheduler job keyed on `wishlist.remind_at`.
 | Telegram first | The first user already lives there; no public web surface to secure | Mobile app: months of work before the first useful output |
 | SQL computes, model phrases | Hallucinated amounts destroy trust in a finance tool | Model reads tables and answers: untestable numbers |
 | PostgreSQL in the project's own container | Decided 2026-10-17. A cloned repo runs with one `docker compose up`; NUMERIC money type; tenant filtering | A shared database on other infrastructure: couples a public project to private systems. SQLite: fine for one user, weak for the multi-user path |
+| Closed beta with owner approval | Decided 2026-10-18. Lets real people ask from LinkedIn while one person can still review every account and the legal checks finish | Open self-service sign-up: no review of who stores financial data on a personal server before the legal basis is clear |
+| Cloudflare Access one-time codes as the login | No password storage, no reset flow, no email sender to run; Access already guards the site | Own email and password login: hashing, verification and reset mail, rate limiting and a larger attack surface; revisit for an open launch |
+| A request is not an account | Approval is the only code path that creates a tenant, so a bug in registration cannot hand out data access | Create the tenant at registration and flag it pending: every query would need a pending check, and one forgotten check leaks |
 | Build, informed by references | Indonesia-specific parsers and proactive features are the gap | Adopt Actual Budget or Firefly III: good ledgers, but the proactive layer and Indonesian sources would still be built; their schemas are used as reference only, no code copied |
 
 ## 6. Deliberately not designed yet
 
-- Registration, billing, roles and quotas.
+- Open self-service sign-up without approval, billing, quotas.
+- Email notifications to applicants about a decision (they see the status when they log in).
+- Removing rejected users from the Zero Trust organisation automatically; done by hand in v1.
 - Budgets, goals, wishlist and category management in the dashboard (F23).
 - Licensed aggregator integration (F20).
 - Multi-currency rates (F19).
@@ -313,6 +369,12 @@ Stage 0b Dashboard: overview, accounts, statement upload (Saku CSV), import hist
          no public hostname yet, no bank-specific parsers
 Stage 0c Deploy the dashboard behind Cloudflare Access on a subdomain, origin on 127.0.0.1
          needs owner approval for the tunnel route and the Access policy; no real data until Stage 1
+Stage 0d Closed beta plumbing: public landing, /demo, app moved under /app, registration form,
+         signup table, approval queue, Access apps for /app (any email) and /app/admin (owner)
+         nobody except the owner is approved in this stage
+Stage 0e Beta gate: privacy policy and terms (versioned), export and delete (F11),
+         PSE / UU PDP / OJK check recorded with sources, seat limit and seat expiration checked
+         only after this stage may the owner approve another person
 Stage 1  Telegram bot + manual entry + CSV/PDF import for the 2 sources that prove
          easiest in the source matrix + cash-flow summary
          -> measures the PRD "Now" baseline and fills the source matrix
@@ -325,8 +387,8 @@ Stage 4  Recurring/fee detection + email notification ingest + post-spend nudges
 Stage 5  Income scout with scam filter
 Stage 6  Public demo repo (synthetic data) + LinkedIn write-up
          still no public multi-user service
-Stage 7  Multi-user readiness review: PSE, UU PDP, OJK boundary, security review
-         opening to other users only after this passes
+Stage 7  Open-launch readiness review: security review, support load, cost; decide whether
+         approval can be dropped. Closed beta users exist before this stage (Stage 0e)
 ```
 
 ## 8. How to verify
@@ -340,6 +402,14 @@ Stage 0b a forged or unsigned identity gets 401; a non-member gets 403; a user c
          the upload temp directory is empty after every upload
 Stage 0c from a browser without an Access session the subdomain shows the Access login, not the
          page; nothing answers on the origin host's LAN or public interfaces
+Stage 0d without an Access session /app shows the Access login while / and /demo load; / and /demo
+         contain no data from any tenant except the demo tenant; a verified non-member gets the form,
+         not a page with data; a pending user gets 403 on upload, on Connect Telegram and on every
+         financial page; a JWT whose aud belongs to neither Access app gets 401; a user-role member
+         gets 403 on /app/admin and on approve; consent unchecked stores nothing; over the pending
+         cap stores nothing; approve creates exactly one tenant and one member
+Stage 0e export returns every row of the tenant and nothing of another; delete leaves 0 rows for the
+         tenant in every table and removes the Telegram link; the accepted policy version is stored
 Stage 1  import a real statement; rows_in = rows_new + rows_dup; re-import the same file
          -> 0 new rows; temp directory is empty afterwards
 Stage 2  correct the same merchant twice -> a learned rule appears; stop the scheduler
@@ -350,7 +420,8 @@ Stage 4  forward a bank email; one transaction appears; the matching statement l
          later does not create a duplicate
 Stage 5  feed a known scam posting -> filtered; digest has at most 5 items with URLs
 Stage 6  a second person clones the repo and runs the demo in under 10 minutes
-Stage 7  a request with another tenant's telegram_id returns nothing from tenant 'local'
+Stage 7  external security review findings closed; a request with another tenant's telegram_id or
+         JWT returns nothing from any other tenant
 ```
 
 The negatives (no credential columns, no duplicates, dead scheduler reported, other tenant sees nothing) are the checks that matter most.

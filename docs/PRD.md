@@ -1,6 +1,6 @@
 # PRD: Personal Finance Assistant (working name "Saku")
 
-Draft v0.1, 2026-10-17, by Yona Surya Pratama. A personal R&D project under the MIT license.
+Draft v0.2, 2026-10-18 (v0.1 2026-10-17), by Yona Surya Pratama. A personal R&D project under the MIT license.
 The research below comes from public product pages and GitHub API data captured on 2026-10-17.
 
 ## 1. Problem
@@ -36,6 +36,7 @@ Every "Now" value must be a measurement. Stage 1 measures them for the first use
 | Recurring charges identified | 0 | every recurring charge seen twice or more |
 | Purchase checks answered with real numbers | 0 | 100% of checks cite budget and balance sources |
 | Income opportunities surfaced per month | 0 | at least 4 relevant, 0 scams |
+| Requests from unapproved accounts that reach financial data | 0 (no sign-up path exists yet) | 0, proven by negative tests in Stage 0d |
 
 The LinkedIn mini project counts as successful when another developer can clone the public repository and run the demo on synthetic data in under 10 minutes.
 
@@ -48,7 +49,7 @@ These are commitments.
 - **No investment, lending or insurance advice.** No product recommendations, no stock or crypto picks. Education and the user's own numbers only.
 - **No credit scoring** and no selling or sharing of user data.
 - **Not a full accounting system.** Business bookkeeping is out of scope.
-- **No public multi-user launch in v1.** Multi-user is designed for, not opened. Registration, billing and a public website are deferred until the legal checks in section 8 are done.
+- **No open launch in v1. Closed beta only.** Anyone may register, but nobody gets an account until the owner approves it. Nobody except the owner is approved before the privacy policy, the terms, export and delete (F11) and the PSE / UU PDP check are done (Stage 0e). Billing is out of scope.
 
 ## 4. Users and moments
 
@@ -60,7 +61,13 @@ Version 1 has one primary user, the project owner. Three moments shape the desig
 | Monday morning | Telegram, 30 seconds | Last week: in, out, surplus/deficit, the one category that moved most, upcoming bills. |
 | Month end | 10 minutes | Full picture across accounts, leaks found, income ideas, one concrete change for next month. |
 
-Later users (designed for, not opened in v1): Indonesian employees and freelancers with 2 to 5 banks/e-wallets.
+Beta users (closed beta, approved one by one): Indonesian employees and freelancers with 2 to 5 banks/e-wallets.
+
+| Moment | Context | What the system must do |
+|---|---|---|
+| "What is this?" | A visitor from LinkedIn, phone, 1 minute | Public page explains Saku and shows the demo on synthetic data. No login needed to look. |
+| "I want to try it" | The visitor registers | Email login, a short form, explicit consent. The page then says plainly: waiting for approval, nothing stored yet except the form. |
+| "Who is asking?" | The owner, weekly | One queue of pending requests with approve and reject. Approval creates the account; nothing else does. |
 
 ## 5. Functional requirements
 
@@ -80,6 +87,10 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 - **F11 Data export and delete.** User can export everything and delete everything (UU PDP rights).
 - **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Login through Cloudflare Access by email.
 - **F22 Ops page for the admin.** Per-tenant counts, last import, failed imports, component heartbeats. Never shows another tenant's transactions, descriptions, amounts or account names.
+- **F24 Public landing and demo.** A public front page and a read-only demo on synthetic data. No login. No real data, no forms that write.
+- **F25 Self-registration with consent.** A visitor proves an email address (Cloudflare Access one-time code), fills a short form and accepts the privacy policy and terms. The result is a pending request, not an account.
+- **F26 Owner approval queue.** The owner approves or rejects each request on the ops page. Approval creates the tenant and the member. Pending and rejected users cannot upload, connect Telegram or see any financial page.
+- **F27 Privacy policy and terms pages,** versioned. The accepted version and time are stored per request. Required before the first non-owner approval.
 
 ### Should
 - **F12 Email notification ingest.** Read-only access to a mail label where the user forwards bank notifications. Near real-time transactions.
@@ -130,13 +141,20 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 | Nudges become nagging and get muted | Rate limit, quiet hours, user can switch off each nudge type |
 | Income suggestions include scams | Allow-list of sources, keyword filter (deposit first, guaranteed return, MLM, pinjol, judi), user report button |
 | Portfolio demo leaks real data | Demo mode refuses real imports; screenshots for LinkedIn are taken in demo mode only |
-| Legal status for multi-user unknown | Public launch blocked until PSE registration, UU PDP review and the OJK boundary are confirmed from official sources |
+| Legal status for multi-user unknown | Approval of anyone except the owner is blocked until PSE registration, UU PDP review and the OJK boundary are confirmed from official sources (Stage 0e). Legal review by a qualified person is recommended; the agent's research is not legal advice |
+| Spam or fake sign-ups | Registration creates only a pending row; a cap on open pending requests; Cloudflare's one-time-code login rate limits per email; the owner reviews every request |
+| Zero Trust seats used up by sign-ups | Every person who completes the Access login consumes a Cloudflare One seat. Seat expiration for inactive users, removing rejected users from the organisation, and a pending cap. The free-plan seat limit is checked before the beta opens |
+| Public pages widen the attack surface | Public routes read only the synthetic demo tenant; the app under the protected path still verifies the Access JWT itself; CSP without scripts; tests that public pages contain no other tenant's data |
+| Users trust the beta with data before the legal basis is clear | Stage 0e gate; the waiting page and the privacy policy state that this is a closed beta run by one person |
 
 ## 9. Open questions and decisions
 
 ### Open questions (answers change the design)
 1. For each of the first user's sources: PDF or CSV e-statement available? Email notification per transaction? Verified in Stage 1 from the real apps and inbox, not assumed.
 2. Model provider for categorisation and replies.
+3. Language of the public pages: English only, or English and Indonesian?
+4. Size of the closed beta (cap on approved users) and on open pending requests.
+5. Who reviews the privacy policy and terms before the first non-owner approval.
 
 ### Decisions already made (2026-10-17)
 - PRD and HLD before code.
@@ -150,3 +168,4 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 - F15 income scope for v1: freelance and job openings only. Local side work is out of scope for now.
 - A web dashboard is part of v1 (F21, F22), for both the user's money picture and an admin ops view. The first management function is accounts and statement upload; budgets and categories follow later (F23).
 - The real-data dashboard is reachable only through Cloudflare Access with email login. The origin listens on 127.0.0.1 and has no open port.
+- 2026-10-18: closed beta. The site is public; anyone may register; access to the app needs owner approval. This replaces the v0.1 non-goal "no public multi-user launch". Login stays with Cloudflare Access one-time codes, so Saku stores no passwords.
