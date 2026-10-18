@@ -6,7 +6,7 @@
   <p class="lede">Every upload, including the ones that failed. Files are deleted after reading; only a fingerprint of each one is kept.</p>
 </header>
 <section class="panel tight">
-  {% if not batches %}<p class="lede">No imports yet. <a href="/accounts">Upload a statement</a>.</p>{% else %}
+  {% if not batches %}<p class="lede">No imports yet. <a href="/app/accounts">Upload a statement</a>.</p>{% else %}
   <table>
     <thead><tr><th>When</th><th>Account</th><th>Status</th><th class="num">Read</th><th class="num">New</th><th class="num">Duplicate</th><th class="hide-sm">Detail</th></tr></thead>
     <tbody>

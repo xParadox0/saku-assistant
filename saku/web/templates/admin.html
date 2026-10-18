@@ -6,7 +6,43 @@
   <p class="lede">Counts, statuses and timestamps for every tenant. Other people's transactions, descriptions and amounts never appear here.</p>
 </header>
 
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+
 <section class="panel tight">
+  <h2>Beta requests</h2>
+  <p class="hint">Pending {{ signup_counts.pending }} of {{ beta.pending_cap }} ·
+     approved {{ signup_counts.approved }} of {{ beta.approved_cap }} · rejected {{ signup_counts.rejected }} ·
+     registration {{ 'open' if beta.registration_open else 'closed' }}</p>
+  {% if not beta.approvals_allowed %}
+    <p class="notice bad">Approvals are blocked until the reviewed privacy policy and terms are configured (SAKU_POLICY_REVIEWED).</p>
+  {% endif %}
+  {% if not signups %}
+    <p class="lede small">No pending requests.</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Asked</th><th>Person</th><th class="hide-sm">Note</th><th class="num">Decide</th></tr></thead>
+    <tbody>
+    {% for s in signups %}
+      <tr><td class="nowrap">{{ s.created_at.strftime('%d %b, %H:%M') }}</td>
+          <td><span class="strong">{{ s.display_name }}</span><span class="sub-line">{{ s.email }} · {{ s.lang }} · policy {{ s.consent_version }}</span></td>
+          <td class="hide-sm note">{{ s.note or '' }}</td>
+          <td><div class="actions">
+            <form method="post" action="/app/admin/signups">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="email" value="{{ s.email }}">
+              <button type="submit" name="action" value="approve" {% if not beta.approvals_allowed %}disabled{% endif %}>Approve</button>
+            </form>
+            <form method="post" action="/app/admin/signups">
+              <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="email" value="{{ s.email }}">
+              <button type="submit" name="action" value="reject" class="danger">Reject</button>
+            </form>
+          </div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section class="panel">
   <h2>Component heartbeats</h2>
   {% if not heartbeats %}
     <p class="notice bad">No component has reported yet. The bot and scheduler start writing heartbeats in Stage 1 and 2.

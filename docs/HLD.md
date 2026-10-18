@@ -278,7 +278,9 @@ The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so
 
 - Cloudflare Access protects only `/app`. Path rules are matched most-specific first, so `/app/admin` gets its own stricter application. Each Access application has its own AUD tag; the dashboard accepts the JWT only if its `aud` is one of the configured tags, and the admin routes still check `role = admin` in the database.
 - Passing Access proves control of an email address and nothing more. The `member` table still decides access: a verified email that is not a member sees only the registration form or its waiting page.
-- Public routes read only the demo tenant through a dedicated read method. They have no forms that write and set no cookies.
+- Public routes read only the demo tenant. They have no forms that write. The only cookie is `saku_lang` (en or id), a functional preference set by the language switch.
+- Two switches guard the beta in code. `SAKU_REGISTRATION=open` is needed before the form accepts anything; the default is closed. `SAKU_POLICY_REVIEWED` must equal the current policy version before approve works for anyone; until then the approval endpoint refuses.
+- While registration is closed, the `/app` Access policy keeps listing the owner only, so no stranger uses a seat. Opening registration is one change: the `/app` policy include becomes everyone.
 - Registration writes one `signup` row. Approval, in one transaction, creates the tenant, the member and marks the request approved. Rejection records who and when; the row is kept as the consent record.
 - Open pending requests are capped (`SAKU_PENDING_CAP`). Over the cap the form says registration is paused and stores nothing.
 - Every Access login uses a Cloudflare One seat. Rejected users are removed from the Zero Trust organisation and seat expiration is enabled for inactive users.

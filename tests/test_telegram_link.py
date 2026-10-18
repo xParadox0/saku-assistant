@@ -127,27 +127,27 @@ def web(two, db_url, tmp_path):
 
 
 def _csrf(c, email):
-    page = c.get("/settings", headers={"x-test-email": email}).text
+    page = c.get("/app/settings", headers={"x-test-email": email}).text
     return page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 def test_settings_makes_deep_link_and_bot_redeems_it(web, two):
     h = {"x-test-email": "alice@example.com"}
-    page = web.post("/settings/telegram/code", data={"csrf": _csrf(web, "alice@example.com")}, headers=h).text
+    page = web.post("/app/settings/telegram/code", data={"csrf": _csrf(web, "alice@example.com")}, headers=h).text
     url = page.split('href="https://t.me/Saku_Test_Bot?start=', 1)[1].split('"', 1)[0]
     assert bot.handle(two, upd(ALICE_TG, f"/start {url}"))[0].text.startswith("Connected to Saku as alice@example.com")
-    assert "Connected since" in web.get("/settings", headers=h).text
+    assert "Connected since" in web.get("/app/settings", headers=h).text
 
 
 def test_code_endpoint_requires_csrf(web):
-    r = web.post("/settings/telegram/code", data={"csrf": "nope"}, headers={"x-test-email": "alice@example.com"})
+    r = web.post("/app/settings/telegram/code", data={"csrf": "nope"}, headers={"x-test-email": "alice@example.com"})
     assert r.status_code == 403 and "t.me/" not in r.text
 
 
 def test_web_unlink(web, two):
     bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
     h = {"x-test-email": "alice@example.com"}
-    r = web.post("/settings/telegram/unlink", data={"csrf": _csrf(web, "alice@example.com")}, headers=h)
+    r = web.post("/app/settings/telegram/unlink", data={"csrf": _csrf(web, "alice@example.com")}, headers=h)
     assert "Telegram disconnected" in r.text and two.telegram_identity(ALICE_TG) is None
 
 
@@ -155,7 +155,7 @@ def test_admin_sees_link_count_not_telegram_ids(two, db_url, tmp_path):
     two.add_member("ops@example.com", "ops", "admin")
     bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
     app = create_app(lambda: psycopg.connect(db_url, autocommit=True), HeaderAuth(), SECRET, str(tmp_path))
-    page = TestClient(app).get("/admin", headers={"x-test-email": "ops@example.com"}).text
+    page = TestClient(app).get("/app/admin", headers={"x-test-email": "ops@example.com"}).text
     assert str(ALICE_TG) not in page
 
 

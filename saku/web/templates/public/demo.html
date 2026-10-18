@@ -1,0 +1,11 @@
+{% extends "public/base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}{{ t.demo_title }} · Saku{% endblock %}
+{% block content %}
+<p class="notice demo-banner">{{ icon('i-alert') }}<span>{{ t.demo_banner }}</span></p>
+{% if month %}
+  {% include "_overview_body.html" %}
+{% else %}
+  <section class="empty"><h1>{{ t.demo_title }}</h1><p>{{ t.demo_missing }}</p></section>
+{% endif %}
+{% endblock %}

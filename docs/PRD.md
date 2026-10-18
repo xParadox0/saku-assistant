@@ -152,9 +152,6 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 ### Open questions (answers change the design)
 1. For each of the first user's sources: PDF or CSV e-statement available? Email notification per transaction? Verified in Stage 1 from the real apps and inbox, not assumed.
 2. Model provider for categorisation and replies.
-3. Language of the public pages: English only, or English and Indonesian?
-4. Size of the closed beta (cap on approved users) and on open pending requests.
-5. Who reviews the privacy policy and terms before the first non-owner approval.
 
 ### Decisions already made (2026-10-17)
 - PRD and HLD before code.
@@ -168,4 +165,7 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 - F15 income scope for v1: freelance and job openings only. Local side work is out of scope for now.
 - A web dashboard is part of v1 (F21, F22), for both the user's money picture and an admin ops view. The first management function is accounts and statement upload; budgets and categories follow later (F23).
 - The real-data dashboard is reachable only through Cloudflare Access with email login. The origin listens on 127.0.0.1 and has no open port.
+- 2026-10-18: public pages and the registration flow are in English with a switch to Indonesian. The dashboard itself stays English for now.
+- 2026-10-18: beta caps are 20 approved users and 50 open pending requests.
+- 2026-10-18: the owner and a legal consultant review the privacy policy and terms. Approving anyone except the owner stays blocked in code until the reviewed version is configured.
 - 2026-10-18: closed beta. The site is public; anyone may register; access to the app needs owner approval. This replaces the v0.1 non-goal "no public multi-user launch". Login stays with Cloudflare Access one-time codes, so Saku stores no passwords.

@@ -1,0 +1,10 @@
+{% extends "public/base.html" %}
+{% block title %}{{ title }} · Saku{% endblock %}
+{% block content %}
+<article class="policy rise">
+  <h1>{{ title }}</h1>
+  <p class="hint">{{ t.policy_version.format(version=version) }}</p>
+  {% if draft %}<p class="notice bad"><span>{{ t.policy_draft }}</span></p>{% endif %}
+  {% include body %}
+</article>
+{% endblock %}

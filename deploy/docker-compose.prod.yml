@@ -34,6 +34,11 @@ services:
       SAKU_CF_AUD: ${SAKU_CF_AUD:?set in .env}
       SAKU_SECRET: ${SAKU_SECRET:?set in .env}
       SAKU_BOT_USERNAME: ${SAKU_BOT_USERNAME:-}
+      SAKU_REGISTRATION: ${SAKU_REGISTRATION:-closed}
+      SAKU_PENDING_CAP: ${SAKU_PENDING_CAP:-50}
+      SAKU_APPROVED_CAP: ${SAKU_APPROVED_CAP:-20}
+      SAKU_POLICY_REVIEWED: ${SAKU_POLICY_REVIEWED:-}
+      SAKU_CONTACT: ${SAKU_CONTACT:-}
     depends_on: { db: { condition: service_healthy } }
     networks: [internal, edge, egress]   # egress only to fetch Cloudflare Access signing keys; no published ports
     read_only: true

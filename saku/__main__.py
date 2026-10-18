@@ -3,6 +3,7 @@
     python -m saku init-db                         apply the schema
     python -m saku demo                            load synthetic demo data and print monthly cash flow
     python -m saku add-member EMAIL TENANT [admin] allow an email (verified by Cloudflare Access) into a tenant
+    python -m saku seed-demo                       load the synthetic demo tenant for the public /demo page (no login)
     python -m saku serve [--host H] [--port P]     run the dashboard
     python -m saku bot                             run the Telegram bot (long polling; needs TELEGRAM_BOT_TOKEN)
 """
@@ -19,8 +20,9 @@ from .repo import Repo
 DEMO_EMAIL = "demo@saku.local"
 
 
-def load_demo(repo: Repo) -> demo.DemoData:
-    """Load the synthetic demo tenant once. Safe to call repeatedly."""
+def load_demo(repo: Repo, with_member: bool = True) -> demo.DemoData:
+    """Load the synthetic demo tenant once. Safe to call repeatedly.
+    with_member=False is for production: the public /demo page reads the tenant, nobody can log in to it."""
     repo.ensure_tenant(demo.DEMO_TENANT)
     data = demo.generate()
     existing = {a["provider"]: a["id"] for a in repo.accounts(demo.DEMO_TENANT)}
@@ -30,7 +32,8 @@ def load_demo(repo: Repo) -> demo.DemoData:
         print(f"import {label:<15} rows {res.rows_in:>3}  new {res.rows_new:>3}  duplicate {res.rows_dup:>3}")
     print(f"own transfers paired: {repo.detect_own_transfers(demo.DEMO_TENANT)}")
     repo.apply_categories(demo.DEMO_TENANT)
-    repo.add_member(DEMO_EMAIL, demo.DEMO_TENANT, "admin")
+    if with_member:
+        repo.add_member(DEMO_EMAIL, demo.DEMO_TENANT, "admin")
     return data
 
 
@@ -78,6 +81,9 @@ def main(argv: list[str]) -> int:
         conn = connect(); init_schema(conn)
         Repo(conn).add_member(argv[2], argv[3], argv[4] if len(argv) > 4 else "user")
         print(f"member {argv[2].lower()} -> tenant {argv[3]}"); return 0
+    if cmd == "seed-demo":
+        conn = connect(); init_schema(conn)
+        load_demo(Repo(conn), with_member=False); return 0
     if cmd == "serve":
         return serve(argv)
     if cmd == "bot":

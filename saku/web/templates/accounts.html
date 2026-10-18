@@ -38,13 +38,13 @@
     <details class="manage">
       <summary>{{ icon('i-chevron') }}Rename or remove</summary>
       <div class="manage-body">
-        <form method="post" action="/accounts/{{ a.id }}/rename" class="row-form">
+        <form method="post" action="/app/accounts/{{ a.id }}/rename" class="row-form">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <input type="text" name="label" value="{{ a.label }}" maxlength="60" required aria-label="New name for {{ a.label }}">
           <button type="submit" class="quiet">Save</button>
         </form>
         {% if a.transactions == 0 %}
-        <form method="post" action="/accounts/{{ a.id }}/delete">
+        <form method="post" action="/app/accounts/{{ a.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit" class="danger" aria-label="Delete {{ a.label }}">{{ icon('i-x') }}Delete account</button>
         </form>
@@ -71,7 +71,7 @@
       <p class="lede small">Pick the account, choose the file, done. Uploading the same file twice is safe: duplicates are skipped.</p>
     </div>
   </div>
-  <form method="post" action="/imports" enctype="multipart/form-data" class="upload">
+  <form method="post" action="/app/imports" enctype="multipart/form-data" class="upload">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label class="field"><span>Account</span>
       <select name="account_id">{% for a in accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}</select></label>
@@ -79,13 +79,13 @@
       <input type="file" name="file" accept=".csv,.pdf" required></label>
     <button type="submit">{{ icon('i-upload') }}Import</button>
   </form>
-  <p class="hint">Accepted now: the Saku CSV format. <a href="/accounts/template.csv">Download the template</a>. Bank formats are being added one by one.</p>
+  <p class="hint">Accepted now: the Saku CSV format. <a href="/app/accounts/template.csv">Download the template</a>. Bank formats are being added one by one.</p>
 </section>
 {% endif %}
 
 <section class="card" id="add">
   <div class="card-head"><h2>Add an account</h2></div>
-  <form method="post" action="/accounts" class="grid-form">
+  <form method="post" action="/app/accounts" class="grid-form">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <fieldset class="kind-pick wide">
       <legend>Type</legend>

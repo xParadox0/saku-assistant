@@ -32,10 +32,11 @@ class CloudflareAccessAuth:
         team_domain = team_domain.rstrip("/")
         if not team_domain.startswith("https://") or not team_domain.endswith(".cloudflareaccess.com"):
             raise ValueError("team domain must look like https://<team>.cloudflareaccess.com")
-        if not audience:
+        auds = [a.strip() for a in (audience.split(",") if isinstance(audience, str) else audience) if a and a.strip()]
+        if not auds:
             raise ValueError("audience (the Access application AUD tag) is required")
         self.issuer = team_domain
-        self.audience = audience
+        self.audience = auds  # one tag per Access application in front of the app (/app and /app/admin)
         self._fetch = jwks_fetch or self._http_jwks
         self._keys: dict[str, dict] = {}
         self._fetched_at = 0.0

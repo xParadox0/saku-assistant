@@ -366,3 +366,63 @@ code { font-family: var(--text); background: var(--surface-3); color: var(--ink)
 .actions-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
 .actions-row .notice { margin: 0; }
 ul.plain { margin: 8px 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
+
+/* ---- public pages ------------------------------------------------------------------------------------ */
+body.public { min-height: 100dvh; display: flex; flex-direction: column; }
+.pub-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  max-width: 1180px; width: 100%; margin: 0 auto; padding: 22px 24px; }
+.pub-nav { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pub-nav > a:not(.button) { color: var(--muted); text-decoration: none; padding: 9px 12px; border-radius: var(--r-md); font-weight: 500; }
+.pub-nav > a:not(.button):hover, .pub-nav > a[aria-current="page"] { background: var(--surface-2); color: var(--ink); }
+.lang-form { margin: 0; }
+button.small, .button.small { min-height: 36px; padding: 9px 14px; font-size: 13px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.pub-main { max-width: 1180px; width: 100%; margin: 0 auto; padding: 12px 24px 40px; flex: 1; }
+.pub-hero { padding: 56px 0 40px; max-width: 760px; }
+.pub-hero h1 { font-size: clamp(36px, 5vw, 58px); line-height: 1.04; letter-spacing: -0.035em; margin: 18px 0 16px; }
+.pub-hero .lede { font-size: 17px; max-width: 60ch; }
+.pub-hero .actions-row { margin-top: 28px; }
+.beta-pill { display: inline-flex; align-items: center; gap: 8px; background: var(--accent-soft); color: #BFF3FF;
+  padding: 7px 14px 7px 10px; border-radius: 99px; font-size: 13px; font-weight: 500; }
+.beta-pill .ic { width: 17px; height: 17px; color: var(--accent); }
+.pub-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.pub-split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.pub-split .card + .card { margin-top: 0; }
+.pub-split h2 { margin-bottom: 16px; }
+ul.never { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+ul.never li { display: flex; gap: 12px; align-items: flex-start; color: var(--muted); }
+ul.never .ic { color: var(--neg); margin-top: 2px; }
+.pub-foot { max-width: 1180px; width: 100%; margin: 0 auto; padding: 24px; color: var(--faint); font-size: 13px; }
+.pub-foot p { margin: 4px 0; }
+.pub-foot a { color: var(--muted); }
+.demo-banner { background: var(--warn-soft); color: #FFE2B5; }
+.demo-banner .ic { color: var(--warn); }
+.policy { max-width: 760px; background: var(--surface); border-radius: var(--r-lg); padding: 36px; }
+.policy h1 { margin-bottom: 4px; }
+.policy h2 { margin: 28px 0 10px; }
+.policy p, .policy li { color: var(--muted); }
+.policy ul { padding-left: 20px; display: grid; gap: 6px; }
+.policy b { color: var(--ink); }
+.signup { max-width: 640px; margin: 24px auto 0; }
+.signup h1 { font-size: 30px; }
+.signup-form { display: grid; gap: 16px; margin-top: 22px; }
+textarea { font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 10px 12px; width: 100%; resize: vertical; }
+textarea:focus { border-color: var(--accent); outline: none; }
+.consent { display: flex; gap: 12px; align-items: flex-start; color: var(--muted); font-size: 14px; }
+.consent input { width: 20px; height: 20px; min-height: 0; margin-top: 2px; flex: none; accent-color: var(--accent); }
+@media (max-width: 860px) {
+  .pub-grid, .pub-split { grid-template-columns: minmax(0, 1fr); }
+  .pub-hero { padding: 28px 0 24px; }
+  .policy { padding: 22px 18px; }
+}
+.button.quiet { background: var(--surface-2); color: var(--ink); }
+.button.quiet:hover { background: var(--surface-3); }
+.pub-split { align-items: start; }
+@media (max-width: 640px) {
+  .pub-top { padding: 16px; gap: 10px; }
+  .pub-nav { width: 100%; justify-content: space-between; }
+  .pub-nav > a:not(.button) { padding: 8px 6px; }
+  .pub-main { padding: 8px 16px 32px; }
+  .pub-hero .actions-row .button { flex: 1 1 100%; }
+}

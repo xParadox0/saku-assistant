@@ -25,6 +25,7 @@ from typing import Callable
 import psycopg
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from dataclasses import dataclass, field
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -34,9 +35,11 @@ from .. import insights
 from ..categorise import CATEGORIES, label as cat_label
 from ..format import rupiah, rupiah_short, signed_rupiah
 from ..repo import ACCOUNT_KINDS, Repo
+from . import i18n
 from .auth import AuthError, AuthUnavailable, CloudflareAccessAuth, DevAuth, Identity
 
 HERE = Path(__file__).parent
+DEMO_TENANT = "demo"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 PROVIDER_SUGGESTIONS = ["bca", "bri", "bni", "mandiri", "btn", "cimb", "permata", "danamon", "ocbc", "uob",
@@ -50,6 +53,23 @@ class Forbidden(Exception):
 
 class NotFound(Exception):
     pass
+
+
+class NotMember(Exception):
+    """A verified email without a member row: it may only see the registration flow."""
+
+
+@dataclass
+class Beta:
+    registration_open: bool = False          # SAKU_REGISTRATION=open
+    pending_cap: int = 50                    # SAKU_PENDING_CAP
+    approved_cap: int = 20                   # SAKU_APPROVED_CAP
+    policy_reviewed: str = ""                # SAKU_POLICY_REVIEWED; approve works only when it equals POLICY_VERSION
+    contact: str = ""                        # SAKU_CONTACT, shown in the privacy policy
+
+    @property
+    def approvals_allowed(self) -> bool:
+        return self.policy_reviewed == i18n.POLICY_VERSION
 
 
 def _chart(series: list[dict]) -> dict:
@@ -84,7 +104,9 @@ def _donut(cats: list[dict], total: Decimal) -> list[dict]:
 
 
 def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, secret: str,
-               upload_root: str | None = None, bot_username: str | None = None) -> FastAPI:
+               upload_root: str | None = None, bot_username: str | None = None,
+               beta: Beta | None = None) -> FastAPI:
+    beta = beta or Beta()
     bot_username = (bot_username or "").lstrip("@") or None
     if bot_username and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username):
         raise SystemExit("SAKU_BOT_USERNAME is not a valid Telegram username")
@@ -113,7 +135,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         ident = authenticator.identify(request.headers)
         member = repo.member(ident.email)
         if member is None:
-            raise Forbidden("This email is not registered for Saku.")
+            raise NotMember(ident.email)
         return ident, member
 
     def check_csrf(ident: Identity, token: str) -> None:
@@ -145,6 +167,13 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         return templates.TemplateResponse(request, "error.html", {"title": "Sign-in check unavailable",
             "message": "Saku could not reach Cloudflare to verify your sign-in. Try again in a minute."}, status_code=503)
 
+    @app.exception_handler(NotMember)
+    async def _not_member(request: Request, exc: NotMember):
+        if request.method == "GET":
+            return RedirectResponse("/app/register", status_code=303)
+        return templates.TemplateResponse(request, "error.html", {"title": "Not allowed",
+            "message": "This email has no Saku account yet."}, status_code=403)
+
     @app.exception_handler(Forbidden)
     async def _forbidden(request: Request, exc: Forbidden):
         return templates.TemplateResponse(request, "error.html", {"title": "Not allowed", "message": str(exc)}, status_code=403)
@@ -159,35 +188,37 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             repo.ping()
         return "ok"
 
-    @app.get("/", response_class=HTMLResponse)
+    def overview_ctx(repo: Repo, tenant: str, first_name: str | None) -> dict:
+        month = repo.latest_month(tenant)
+        ctx = {"page": "overview", "month": month, "accounts": repo.account_stats(tenant)}
+        if month:
+            repo.apply_categories(tenant)
+            series = repo.monthly_series(tenant, month, 6)
+            cf = series[-1]
+            prev = series[-2] if len(series) > 1 else None
+            saved_pct = int((cf["net"] / cf["income"] * 100).to_integral_value()) if cf["income"] > 0 else None
+            cats = repo.spending_by_category(tenant, cf["start"], cf["end"])
+            prev_cats = repo.spending_by_category(tenant, prev["start"], prev["end"]) if prev else []
+            daily = repo.daily_spending(tenant, cf["start"], cf["end"])
+            recurring = repo.recurring_charges(tenant, cf["start"])
+            covered, days = insights.month_progress(cf["start"], max((d["day"] for d in daily), default=None))
+            now = datetime.now(timezone(timedelta(hours=7)))
+            ctx.update(cf=cf, prev=prev, series=series, saved_pct=saved_pct, chart=_chart(series),
+                       recent=repo.recent_txns(tenant, 8), donut=_donut(cats, cf["spending"] + cf["refunds"]),
+                       notes=insights.build(cf, prev, cats, prev_cats, recurring, daily),
+                       recurring=recurring, covered=covered, days=days,
+                       kept_bar=max(min(saved_pct or 0, 100), 0),
+                       hello=insights.greeting(now.hour), first_name=first_name)
+        return ctx
+
+    @app.get("/app", response_class=HTMLResponse)
     def overview(request: Request):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
-            t = member["tenant_id"]
-            month = repo.latest_month(t)
-            ctx = {"page": "overview", "month": month, "accounts": repo.account_stats(t)}
-            if month:
-                repo.apply_categories(t)
-                series = repo.monthly_series(t, month, 6)
-                cf = series[-1]
-                prev = series[-2] if len(series) > 1 else None
-                saved_pct = int((cf["net"] / cf["income"] * 100).to_integral_value()) if cf["income"] > 0 else None
-                cats = repo.spending_by_category(t, cf["start"], cf["end"])
-                prev_cats = repo.spending_by_category(t, prev["start"], prev["end"]) if prev else []
-                daily = repo.daily_spending(t, cf["start"], cf["end"])
-                recurring = repo.recurring_charges(t, cf["start"])
-                recent = repo.recent_txns(t, 8)
-                covered, days = insights.month_progress(cf["start"], max((d["day"] for d in daily), default=None))
-                now = datetime.now(timezone(timedelta(hours=7)))
-                ctx.update(cf=cf, prev=prev, series=series, saved_pct=saved_pct, chart=_chart(series),
-                           recent=recent, donut=_donut(cats, cf["spending"] + cf["refunds"]),
-                           notes=insights.build(cf, prev, cats, prev_cats, recurring, daily),
-                           recurring=recurring, covered=covered, days=days,
-                           kept_bar=max(min(saved_pct or 0, 100), 0),
-                           hello=insights.greeting(now.hour), first_name=ident.email.split("@")[0].split(".")[0].title())
+            ctx = overview_ctx(repo, member["tenant_id"], ident.email.split("@")[0].split(".")[0].title())
             return render(request, "overview.html", ident, member, **ctx)
 
-    @app.get("/accounts", response_class=HTMLResponse)
+    @app.get("/app/accounts", response_class=HTMLResponse)
     def accounts(request: Request, batch: int | None = None, notice: str | None = None):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -199,7 +230,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                           result=result, notice=notices.get(notice or ""), kinds=sorted(ACCOUNT_KINDS),
                           providers=PROVIDER_SUGGESTIONS, max_mb=MAX_UPLOAD_BYTES // (1024 * 1024))
 
-    @app.post("/accounts")
+    @app.post("/app/accounts")
     def add_account(request: Request, csrf: str = Form(""), kind: str = Form(...), provider: str = Form(...),
                     label: str = Form(...), last4: str = Form("")):
         with repo_ctx() as repo:
@@ -210,9 +241,9 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                     or (last4 and not re.fullmatch(r"\d{4}", last4)):
                 raise Forbidden("Check the account fields: provider is a short slug, label 1-60 characters, last 4 digits only.")
             repo.add_account(member["tenant_id"], kind, provider, label.strip(), last4 or None)
-        return RedirectResponse("/accounts?notice=added", status_code=303)
+        return RedirectResponse("/app/accounts?notice=added", status_code=303)
 
-    @app.post("/accounts/{account_id}/rename")
+    @app.post("/app/accounts/{account_id}/rename")
     def rename(request: Request, account_id: int, csrf: str = Form(""), label: str = Form(...)):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -223,9 +254,9 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                 raise Forbidden(str(e)) from None
             if not ok:
                 raise NotFound("Account not found.")
-        return RedirectResponse("/accounts?notice=renamed", status_code=303)
+        return RedirectResponse("/app/accounts?notice=renamed", status_code=303)
 
-    @app.post("/accounts/{account_id}/delete")
+    @app.post("/app/accounts/{account_id}/delete")
     def delete(request: Request, account_id: int, csrf: str = Form("")):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -233,7 +264,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             outcome = repo.delete_account(member["tenant_id"], account_id)
             if outcome == "not_found":
                 raise NotFound("Account not found.")
-        return RedirectResponse(f"/accounts?notice={outcome}", status_code=303)
+        return RedirectResponse(f"/app/accounts?notice={outcome}", status_code=303)
 
     async def _import(request: Request, account_id: int, csrf: str, file: UploadFile):
         data = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -268,31 +299,31 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                         repo.apply_categories(t)
             finally:
                 shutil.rmtree(workdir, ignore_errors=True)
-        return RedirectResponse(f"/accounts?batch={batch_id}", status_code=303)
+        return RedirectResponse(f"/app/accounts?batch={batch_id}", status_code=303)
 
-    @app.post("/accounts/{account_id}/import")
+    @app.post("/app/accounts/{account_id}/import")
     async def upload(request: Request, account_id: int, csrf: str = Form(""), file: UploadFile = File(...)):
         return await _import(request, account_id, csrf, file)
 
-    @app.post("/imports")
+    @app.post("/app/imports")
     async def upload_picked(request: Request, csrf: str = Form(""), account_id: int = Form(...), file: UploadFile = File(...)):
         return await _import(request, account_id, csrf, file)
 
-    @app.get("/accounts/template.csv")
+    @app.get("/app/accounts/template.csv")
     def template_csv(request: Request):
         with repo_ctx() as repo:
             who(request, repo)
         return Response(CSV_TEMPLATE, media_type="text/csv",
                         headers={"Content-Disposition": "attachment; filename=saku-template.csv"})
 
-    @app.get("/imports", response_class=HTMLResponse)
+    @app.get("/app/imports", response_class=HTMLResponse)
     def imports(request: Request):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             return render(request, "imports.html", ident, member, page="imports",
                           batches=repo.import_batches(member["tenant_id"], 50))
 
-    @app.get("/settings", response_class=HTMLResponse)
+    @app.get("/app/settings", response_class=HTMLResponse)
     def settings(request: Request, notice: str | None = None):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -301,7 +332,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                           telegram=repo.telegram_status(ident.email), notice=notices.get(notice or ""),
                           bot_username=bot_username, link=None)
 
-    @app.post("/settings/telegram/code", response_class=HTMLResponse)
+    @app.post("/app/settings/telegram/code", response_class=HTMLResponse)
     def telegram_code(request: Request, csrf: str = Form("")):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
@@ -315,22 +346,132 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                           telegram=repo.telegram_status(ident.email), notice=None,
                           bot_username=bot_username, link=link)
 
-    @app.post("/settings/telegram/unlink")
+    @app.post("/app/settings/telegram/unlink")
     def telegram_unlink(request: Request, csrf: str = Form("")):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             check_csrf(ident, csrf)
             repo.unlink_telegram(email=ident.email)
-        return RedirectResponse("/settings?notice=unlinked", status_code=303)
+        return RedirectResponse("/app/settings?notice=unlinked", status_code=303)
 
 
-    @app.get("/admin", response_class=HTMLResponse)
+    # ---- public pages (no login; read only the demo tenant) -------------------------------------------------
+    def lang_of(request: Request) -> str:
+        return i18n.pick_lang(request.cookies.get("saku_lang"))
+
+    def pub_render(request: Request, name: str, page: str, status_code: int = 200, **ctx) -> HTMLResponse:
+        lang = lang_of(request)
+        return templates.TemplateResponse(request, name, {"lang": lang, "t": i18n.strings(lang), "page": page,
+                                                          "here": request.url.path, **ctx}, status_code=status_code)
+
+    @app.get("/", response_class=HTMLResponse)
+    def landing(request: Request):
+        return pub_render(request, "public/landing.html", "landing")
+
+    @app.get("/demo", response_class=HTMLResponse)
+    def demo_page(request: Request):
+        with repo_ctx() as repo:
+            ctx = overview_ctx(repo, DEMO_TENANT, None)  # the only tenant a public page ever reads
+            ctx.pop("page", None)
+            return pub_render(request, "public/demo.html", "demo", demo=True, **ctx)
+
+    def policy(request: Request, kind: str):
+        lang = lang_of(request)
+        s = i18n.strings(lang)
+        title = s["privacy_title"] if kind == "privacy" else s["terms_title"]
+        return pub_render(request, "public/policy.html", kind, title=title, body=f"policy/{kind}_{lang}.html",
+                          version=i18n.POLICY_VERSION, draft=not beta.approvals_allowed,
+                          contact=beta.contact or "the address on the project page")
+
+    @app.get("/privacy", response_class=HTMLResponse)
+    def privacy(request: Request):
+        return policy(request, "privacy")
+
+    @app.get("/terms", response_class=HTMLResponse)
+    def terms(request: Request):
+        return policy(request, "terms")
+
+    @app.post("/lang")
+    def set_lang(lang: str = Form("en"), next: str = Form("/")):
+        target = next if next.startswith("/") and not next.startswith("//") and "\\" not in next else "/"
+        resp = RedirectResponse(target, status_code=303)
+        resp.set_cookie("saku_lang", i18n.pick_lang(lang), max_age=365 * 24 * 3600, samesite="lax", secure=True, httponly=True)
+        return resp
+
+    # ---- registration (verified email, no member row) -------------------------------------------------------
+    def signup_state(repo: Repo, email: str) -> tuple[str, dict | None]:
+        s = repo.signup_get(email)
+        if s:
+            return s["status"] if s["status"] in ("pending", "rejected") else "pending", s
+        if not beta.registration_open:
+            return "closed", None
+        if repo.signup_counts()["pending"] >= beta.pending_cap:
+            return "full", None
+        return "form", None
+
+    @app.get("/app/register", response_class=HTMLResponse)
+    def register_page(request: Request):
+        with repo_ctx() as repo:
+            ident = authenticator.identify(request.headers)
+            if repo.member(ident.email) is not None:
+                return RedirectResponse("/app", status_code=303)
+            state, s = signup_state(repo, ident.email)
+            return pub_render(request, "public/signup.html", "signup", state=state, email=ident.email,
+                              csrf=csrf_token(ident.email), version=i18n.POLICY_VERSION,
+                              asked_on=s["created_at"].strftime("%d %b %Y") if s else "")
+
+    @app.post("/app/register", response_class=HTMLResponse)
+    def register_submit(request: Request, csrf: str = Form(""), display_name: str = Form(""),
+                        note: str = Form(""), consent: str = Form("")):
+        with repo_ctx() as repo:
+            ident = authenticator.identify(request.headers)
+            check_csrf(ident, csrf)
+            if repo.member(ident.email) is not None:
+                return RedirectResponse("/app", status_code=303)
+            state, _ = signup_state(repo, ident.email)
+            if state != "form":
+                return RedirectResponse("/app/register", status_code=303)
+            if consent != "yes":
+                return pub_render(request, "public/signup.html", "signup", status_code=400, state="form",
+                                  error=True, email=ident.email, csrf=csrf_token(ident.email),
+                                  version=i18n.POLICY_VERSION, form_name=display_name[:60], form_note=note[:300])
+            outcome = repo.signup_create(ident.email, display_name, note, lang_of(request), i18n.POLICY_VERSION,
+                                         beta.pending_cap)
+            if outcome == "invalid":
+                return pub_render(request, "public/signup.html", "signup", status_code=400, state="form",
+                                  error=True, email=ident.email, csrf=csrf_token(ident.email),
+                                  version=i18n.POLICY_VERSION, form_name=display_name[:60], form_note=note[:300])
+        return RedirectResponse("/app/register", status_code=303)
+
+    # ---- owner approval queue --------------------------------------------------------------------------------
+    @app.post("/app/admin/signups")
+    def decide(request: Request, csrf: str = Form(""), email: str = Form(""), action: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            if member["role"] != "admin":
+                raise Forbidden("Admin only.")
+            check_csrf(ident, csrf)
+            if action not in ("approve", "reject"):
+                raise Forbidden("Unknown action.")
+            if action == "approve" and not beta.approvals_allowed:
+                return RedirectResponse("/app/admin?notice=policy", status_code=303)
+            outcome = repo.signup_decide(email, action == "approve", ident.email, beta.approved_cap)
+        return RedirectResponse(f"/app/admin?notice={outcome}", status_code=303)
+
+
+    @app.get("/app/admin", response_class=HTMLResponse)
     def admin(request: Request):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             if member["role"] != "admin":
                 raise Forbidden("Admin only.")
+            notices = {"approved": "Approved. The account exists now.", "rejected": "Rejected.",
+                       "not_pending": "That request is no longer pending.",
+                       "full": f"The beta is full ({beta.approved_cap} approved users).",
+                       "policy": "Approvals are blocked until the reviewed privacy policy and terms are configured."}
             return render(request, "admin.html", ident, member, page="admin", tenants=repo.admin_tenants(),
+                          signups=repo.signups("pending"), signup_counts=repo.signup_counts(), beta=beta,
+                          notice=notices.get(request.query_params.get("notice", "")),
                           heartbeats=repo.admin_heartbeats(), batches=repo.admin_recent_batches(25))
 
     return app
@@ -348,7 +489,11 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
 
     SAKU_AUTH_MODE   cloudflare (default) or dev
     SAKU_CF_TEAM     https://<team>.cloudflareaccess.com          (cloudflare mode)
-    SAKU_CF_AUD      Access application AUD tag                  (cloudflare mode)
+    SAKU_CF_AUD      Access application AUD tag(s), comma separated (cloudflare mode)
+    SAKU_REGISTRATION   open | closed (default closed)
+    SAKU_PENDING_CAP / SAKU_APPROVED_CAP   beta caps (50 / 20)
+    SAKU_POLICY_REVIEWED   the reviewed policy version; approvals stay blocked until it equals i18n.POLICY_VERSION
+    SAKU_CONTACT     contact address shown in the privacy policy
     SAKU_SECRET      random string for CSRF tokens               (required in cloudflare mode)
     SAKU_DEV_EMAIL   identity used in dev mode
     SAKU_BOT_USERNAME  Telegram bot username for the Connect Telegram link (optional)
@@ -371,4 +516,9 @@ def app_from_env(host: str = "127.0.0.1") -> FastAPI:
             raise SystemExit("SAKU_SECRET must be at least 32 characters in cloudflare mode")
     else:
         raise SystemExit(f"unknown SAKU_AUTH_MODE {mode!r}")
-    return create_app(lambda: connect(url), auth, secret, bot_username=os.environ.get("SAKU_BOT_USERNAME"))
+    beta = Beta(registration_open=os.environ.get("SAKU_REGISTRATION", "closed") == "open",
+                pending_cap=int(os.environ.get("SAKU_PENDING_CAP", "50")),
+                approved_cap=int(os.environ.get("SAKU_APPROVED_CAP", "20")),
+                policy_reviewed=os.environ.get("SAKU_POLICY_REVIEWED", ""),
+                contact=os.environ.get("SAKU_CONTACT", ""))
+    return create_app(lambda: connect(url), auth, secret, bot_username=os.environ.get("SAKU_BOT_USERNAME"), beta=beta)

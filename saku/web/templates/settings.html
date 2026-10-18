@@ -35,7 +35,7 @@
 
   <div class="actions-row">
     {% if bot_username %}
-    <form method="post" action="/settings/telegram/code">
+    <form method="post" action="/app/settings/telegram/code">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button type="submit" {% if telegram %}class="quiet"{% endif %}>{{ icon('i-plus') }}{{ 'Connect a different Telegram account' if telegram else 'Connect Telegram' }}</button>
     </form>
@@ -43,7 +43,7 @@
     <p class="notice bad">{{ icon('i-alert') }}<span>The bot is not configured on this server yet (SAKU_BOT_USERNAME).</span></p>
     {% endif %}
     {% if telegram %}
-    <form method="post" action="/settings/telegram/unlink">
+    <form method="post" action="/app/settings/telegram/unlink">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <button type="submit" class="danger">{{ icon('i-x') }}Disconnect</button>
     </form>

@@ -233,6 +233,76 @@ class Repo:
             (tenant_id, account_id, source, file_sha256, parser, error[:500]),
         ).fetchone()[0]
 
+    # ---- closed beta: signups ---------------------------------------------------------------------------
+    def signup_get(self, email: str) -> dict | None:
+        row = self.c.execute(
+            "SELECT email, display_name, note, lang, consent_version, consent_at, status, decided_at, created_at "
+            "FROM signup WHERE email = %s", (email.strip().lower(),)).fetchone()
+        keys = ("email", "display_name", "note", "lang", "consent_version", "consent_at", "status", "decided_at", "created_at")
+        return dict(zip(keys, row)) if row else None
+
+    def signup_counts(self) -> dict:
+        rows = self.c.execute("SELECT status, COUNT(*) FROM signup GROUP BY status").fetchall()
+        out = {"pending": 0, "approved": 0, "rejected": 0, "withdrawn": 0}
+        out.update({s: n for s, n in rows})
+        return out
+
+    def signup_create(self, email: str, display_name: str, note: str | None, lang: str,
+                      consent_version: str, pending_cap: int) -> str:
+        """Outcomes: created, exists, full, invalid. Never creates a tenant or a member."""
+        email = email.strip().lower()
+        name = " ".join((display_name or "").split())
+        note = " ".join((note or "").split()) or None
+        if not email or not 1 <= len(name) <= 60 or (note and len(note) > 300) or lang not in ("en", "id"):
+            return "invalid"
+        with self.c.transaction():
+            self.c.execute("SELECT pg_advisory_xact_lock(7210001)")  # serialise the cap check
+            if self.member(email) is not None or self.signup_get(email) is not None:
+                return "exists"
+            pending = self.c.execute("SELECT COUNT(*) FROM signup WHERE status = 'pending'").fetchone()[0]
+            if pending >= pending_cap:
+                return "full"
+            self.c.execute(
+                "INSERT INTO signup (email, display_name, note, lang, consent_version, consent_at) "
+                "VALUES (%s, %s, %s, %s, %s, now())", (email, name, note, lang, consent_version))
+        return "created"
+
+    def signups(self, status: str = "pending", limit: int = 100) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT email, display_name, note, lang, consent_version, created_at, decided_at, decided_by "
+            "FROM signup WHERE status = %s ORDER BY created_at LIMIT %s", (status, limit))
+        keys = ("email", "display_name", "note", "lang", "consent_version", "created_at", "decided_at", "decided_by")
+        return [dict(zip(keys, r)) for r in cur.fetchall()]
+
+    def signup_decide(self, email: str, approve: bool, decided_by: str, approved_cap: int) -> str:
+        """Outcomes: approved, rejected, not_pending, full. Approval is the only path that creates a tenant."""
+        import secrets
+        email = email.strip().lower()
+        with self.c.transaction():
+            self.c.execute("SELECT pg_advisory_xact_lock(7210002)")
+            row = self.c.execute("SELECT status FROM signup WHERE email = %s FOR UPDATE", (email,)).fetchone()
+            if not row or row[0] != "pending":
+                return "not_pending"
+            if not approve:
+                self.c.execute("UPDATE signup SET status = 'rejected', decided_at = now(), decided_by = %s "
+                               "WHERE email = %s", (decided_by, email))
+                return "rejected"
+            approved = self.c.execute("SELECT COUNT(*) FROM signup WHERE status = 'approved'").fetchone()[0]
+            if approved >= approved_cap:
+                return "full"
+            if self.member(email) is not None:
+                return "not_pending"
+            tenant = "t_" + secrets.token_hex(6)  # random, never derived from the email
+            self.ensure_tenant(tenant)
+            self.c.execute("INSERT INTO member (email, tenant_id, role) VALUES (%s, %s, 'user')", (email, tenant))
+            self.c.execute("UPDATE signup SET status = 'approved', decided_at = now(), decided_by = %s "
+                           "WHERE email = %s", (decided_by, email))
+        return "approved"
+
+    def demo_reader_ok(self, tenant_id: str) -> bool:
+        """Public pages may only ever read the demo tenant."""
+        return tenant_id == "demo"
+
     # ---- Telegram linking -------------------------------------------------------------------------------
     LINK_TTL_MINUTES = 10
 

@@ -133,3 +133,18 @@ CREATE TABLE IF NOT EXISTS link_code (
     used_at     TIMESTAMPTZ,                     -- single use
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Closed beta. A request is not an account: only approval creates the tenant and the member (HLD 3.10).
+CREATE TABLE IF NOT EXISTS signup (
+    email           TEXT PRIMARY KEY CHECK (email = lower(email)), -- from the verified Access JWT, never from the form
+    display_name    TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 60),
+    note            TEXT CHECK (note IS NULL OR length(note) <= 300),
+    lang            TEXT NOT NULL DEFAULT 'en' CHECK (lang IN ('en', 'id')),
+    consent_version TEXT NOT NULL,                  -- privacy + terms version accepted
+    consent_at      TIMESTAMPTZ NOT NULL,           -- kept after the decision as the consent record
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),
+    decided_at      TIMESTAMPTZ,
+    decided_by      TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS signup_status ON signup (status, created_at);

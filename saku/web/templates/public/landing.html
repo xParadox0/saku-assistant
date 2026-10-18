@@ -1,0 +1,39 @@
+{% extends "public/base.html" %}
+{% from "_macros.html" import icon %}
+{% block content %}
+<section class="pub-hero rise">
+  <span class="beta-pill">{{ icon('i-shield') }}{{ t.beta_note }}</span>
+  <h1>{{ t.hero_title }}</h1>
+  <p class="lede">{{ t.hero_lead }}</p>
+  <div class="actions-row">
+    <a class="button" href="/app">{{ icon('i-plus') }}{{ t.cta_register }}</a>
+    <a class="button quiet" href="/demo">{{ icon('i-chart') }}{{ t.cta_demo }}</a>
+  </div>
+</section>
+
+<section class="pub-grid rise d1">
+  <article class="note-card info"><span class="note-ic">{{ icon('i-wallet') }}</span><div><h3>{{ t.feat1_title }}</h3><p>{{ t.feat1_body }}</p></div></article>
+  <article class="note-card good"><span class="note-ic">{{ icon('i-check') }}</span><div><h3>{{ t.feat2_title }}</h3><p>{{ t.feat2_body }}</p></div></article>
+  <article class="note-card info"><span class="note-ic">{{ icon('i-phone') }}</span><div><h3>{{ t.feat3_title }}</h3><p>{{ t.feat3_body }}</p></div></article>
+</section>
+
+<section class="pub-split rise d2">
+  <div class="card">
+    <h2>{{ t.never_title }}</h2>
+    <ul class="never">
+      <li>{{ icon('i-x') }}<span>{{ t.never_1 }}</span></li>
+      <li>{{ icon('i-x') }}<span>{{ t.never_2 }}</span></li>
+      <li>{{ icon('i-x') }}<span>{{ t.never_3 }}</span></li>
+      <li>{{ icon('i-x') }}<span>{{ t.never_4 }}</span></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>{{ t.how_title }}</h2>
+    <ol class="steps">
+      <li><span class="step-n">1</span><div><span>{{ t.how_1 }}</span></div></li>
+      <li><span class="step-n">2</span><div><span>{{ t.how_2 }}</span></div></li>
+      <li><span class="step-n">3</span><div><span>{{ t.how_3 }}</span></div></li>
+    </ol>
+  </div>
+</section>
+{% endblock %}

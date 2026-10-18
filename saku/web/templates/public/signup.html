@@ -1,0 +1,35 @@
+{% extends "public/base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}{{ t.signup_title }} · Saku{% endblock %}
+{% block content %}
+<section class="card signup rise">
+  {% if state == 'form' %}
+    <h1>{{ t.signup_title }}</h1>
+    <p class="lede small">{{ t.signup_lead.format(email=email) }}</p>
+    {% if error %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.signup_invalid }}</span></p>{% endif %}
+    <form method="post" action="/app/register" class="signup-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field"><span>{{ t.signup_name }}</span>
+        <input name="display_name" required maxlength="60" value="{{ form_name or '' }}" autocomplete="name"></label>
+      <label class="field"><span>{{ t.signup_note }}</span>
+        <textarea name="note" maxlength="300" rows="3">{{ form_note or '' }}</textarea></label>
+      <label class="consent"><input type="checkbox" name="consent" value="yes" required>
+        <span>{{ t.signup_consent_pre }} <a href="/privacy">{{ t.signup_privacy_link }}</a> {{ t.signup_consent_and }} <a href="/terms">{{ t.signup_terms_link }}</a> ({{ version }}).</span></label>
+      <div><button type="submit">{{ icon('i-check') }}{{ t.signup_submit }}</button></div>
+    </form>
+  {% elif state == 'closed' %}
+    <span class="welcome-mark">{{ icon('i-shield') }}</span>
+    <h1>{{ t.signup_closed_title }}</h1><p class="lede">{{ t.signup_closed_body }}</p>
+  {% elif state == 'full' %}
+    <span class="welcome-mark">{{ icon('i-calendar') }}</span>
+    <h1>{{ t.signup_full_title }}</h1><p class="lede">{{ t.signup_full_body }}</p>
+  {% elif state == 'pending' %}
+    <span class="welcome-mark">{{ icon('i-calendar') }}</span>
+    <h1>{{ t.waiting_title }}</h1><p class="lede">{{ t.waiting_body.format(date=asked_on) }}</p>
+  {% elif state == 'rejected' %}
+    <span class="welcome-mark">{{ icon('i-x') }}</span>
+    <h1>{{ t.rejected_title }}</h1><p class="lede">{{ t.rejected_body }}</p>
+  {% endif %}
+  <p class="hint"><a href="/cdn-cgi/access/logout">{{ t.signout }}</a></p>
+</section>
+{% endblock %}

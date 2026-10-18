@@ -59,56 +59,65 @@ def as_(email):
 
 
 def csrf(client, email):
-    page = client.get("/accounts", headers=as_(email)).text
+    page = client.get("/app/accounts", headers=as_(email)).text
     return page.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
 # ---- tenant isolation ------------------------------------------------------------------------------
 def test_overview_shows_only_own_data(client):
-    page = client.get("/", headers=as_("alice@example.com")).text
+    page = client.get("/app", headers=as_("alice@example.com")).text
     low = page.lower()  # descriptions are shown in title case; compare case-insensitively
     assert "alice salary" in low and "Rp5.000.000" in page
     assert "bob" not in low and "777" not in page
 
 
-def test_unknown_email_is_refused(client):
-    r = client.get("/", headers=as_("stranger@example.com"))
-    assert r.status_code == 403 and "alice salary" not in r.text.lower()
+def test_unknown_email_gets_registration_not_data(client):
+    """Since the closed beta, a verified non-member is sent to /app/register (closed by default) and sees no data."""
+    r = client.get("/app", headers=as_("stranger@example.com"), follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/app/register"
+    page = client.get("/app/register", headers=as_("stranger@example.com")).text
+    assert "Registration is not open yet" in page and "alice salary" not in page.lower()
+    for path in ("/app/accounts", "/app/imports", "/app/settings", "/app/admin"):
+        r = client.get(path, headers=as_("stranger@example.com"), follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/app/register", path
+    r = client.post("/app/accounts", data={"csrf": "x", "kind": "bank", "provider": "bank_x", "label": "X"},
+                    headers=as_("stranger@example.com"))
+    assert r.status_code == 403
 
 
 def test_cannot_touch_another_tenants_account(client, seeded, upload_dir):
     tok = csrf(client, "alice@example.com")
     bob = seeded["bob_acc"]
-    r = client.post(f"/accounts/{bob}/rename", data={"csrf": tok, "label": "pwned"}, headers=as_("alice@example.com"))
+    r = client.post(f"/app/accounts/{bob}/rename", data={"csrf": tok, "label": "pwned"}, headers=as_("alice@example.com"))
     assert r.status_code == 404
-    r = client.post(f"/accounts/{bob}/delete", data={"csrf": tok}, headers=as_("alice@example.com"))
+    r = client.post(f"/app/accounts/{bob}/delete", data={"csrf": tok}, headers=as_("alice@example.com"))
     assert r.status_code == 404
-    r = client.post(f"/accounts/{bob}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r = client.post(f"/app/accounts/{bob}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                     files={"file": ("x.csv", b"date,amount,description\n2026-09-01,1,X\n", "text/csv")})
     assert r.status_code == 404
-    assert "Bob Secret Account" in client.get("/accounts", headers=as_("bob@example.com")).text
+    assert "Bob Secret Account" in client.get("/app/accounts", headers=as_("bob@example.com")).text
 
 
 # ---- CSRF --------------------------------------------------------------------------------------------
 def test_post_without_csrf_is_refused(client, seeded):
-    r = client.post(f"/accounts/{seeded['alice_acc']}/rename", data={"label": "x"}, headers=as_("alice@example.com"))
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/rename", data={"label": "x"}, headers=as_("alice@example.com"))
     assert r.status_code == 403
 
 
 def test_csrf_token_of_another_user_is_refused(client, seeded):
     bob_tok = csrf(client, "bob@example.com")
-    r = client.post(f"/accounts/{seeded['alice_acc']}/rename", data={"csrf": bob_tok, "label": "x"},
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/rename", data={"csrf": bob_tok, "label": "x"},
                     headers=as_("alice@example.com"))
     assert r.status_code == 403
 
 
 # ---- admin -------------------------------------------------------------------------------------------
 def test_admin_requires_admin_role(client):
-    assert client.get("/admin", headers=as_("alice@example.com")).status_code == 403
+    assert client.get("/app/admin", headers=as_("alice@example.com")).status_code == 403
 
 
 def test_admin_shows_metadata_not_transactions(client):
-    page = client.get("/admin", headers=as_("ops@example.com")).text
+    page = client.get("/app/admin", headers=as_("ops@example.com")).text
     assert "alice" in page and "bob" in page
     for leaked in ("alice salary", "bob private purchase", "bob secret account", "777.000", "5.000.000"):
         assert leaked not in page.lower()
@@ -118,22 +127,22 @@ def test_admin_shows_metadata_not_transactions(client):
 # ---- account management and upload ------------------------------------------------------------------
 def test_add_rename_delete_account(client):
     tok = csrf(client, "alice@example.com")
-    r = client.post("/accounts", data={"csrf": tok, "kind": "ewallet", "provider": "wallet_x", "label": "Pocket", "last4": ""},
+    r = client.post("/app/accounts", data={"csrf": tok, "kind": "ewallet", "provider": "wallet_x", "label": "Pocket", "last4": ""},
                     headers=as_("alice@example.com"), follow_redirects=False)
     assert r.status_code == 303
-    page = client.get("/accounts", headers=as_("alice@example.com")).text
+    page = client.get("/app/accounts", headers=as_("alice@example.com")).text
     assert "Pocket" in page
 
 
 def test_account_with_transactions_is_not_deleted(client, seeded):
     tok = csrf(client, "alice@example.com")
-    r = client.post(f"/accounts/{seeded['alice_acc']}/delete", data={"csrf": tok}, headers=as_("alice@example.com"))
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/delete", data={"csrf": tok}, headers=as_("alice@example.com"))
     assert "was not deleted" in r.text and "Alice Main" in r.text
 
 
 def test_full_account_number_rejected_by_form(client):
     tok = csrf(client, "alice@example.com")
-    r = client.post("/accounts", data={"csrf": tok, "kind": "bank", "provider": "bank_x", "label": "X", "last4": "1234567890"},
+    r = client.post("/app/accounts", data={"csrf": tok, "kind": "bank", "provider": "bank_x", "label": "X", "last4": "1234567890"},
                     headers=as_("alice@example.com"))
     assert r.status_code == 403
 
@@ -142,10 +151,10 @@ def test_csv_upload_imports_dedupes_and_deletes_file(client, seeded, upload_dir)
     tok = csrf(client, "alice@example.com")
     body = b"date,amount,description,kind\n2026-10-01,-45000,KOPI,normal\n02/10/2026,-15000,ADM,fee\n"
     acc = seeded["alice_acc"]
-    r1 = client.post(f"/accounts/{acc}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r1 = client.post(f"/app/accounts/{acc}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                      files={"file": ("mutasi.csv", body, "text/csv")})
     assert "2 rows read, 2 new, 0 already imported" in r1.text
-    r2 = client.post(f"/accounts/{acc}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r2 = client.post(f"/app/accounts/{acc}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                      files={"file": ("mutasi.csv", body, "text/csv")})
     assert "2 rows read, 0 new, 2 already imported" in r2.text
     assert list(upload_dir.iterdir()) == []
@@ -154,16 +163,16 @@ def test_csv_upload_imports_dedupes_and_deletes_file(client, seeded, upload_dir)
 def test_bad_csv_is_recorded_as_failed_and_nothing_imported(client, seeded, conn):
     tok = csrf(client, "alice@example.com")
     before = Repo(conn).txn_count("alice")
-    r = client.post(f"/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                     files={"file": ("bad.csv", b"date,amount,description\n2026-10-01,1.234.000,X\n", "text/csv")})
     assert "Import failed" in r.text and "line 2" in r.text
     assert Repo(conn).txn_count("alice") == before
-    assert "failed" in client.get("/imports", headers=as_("alice@example.com")).text
+    assert "failed" in client.get("/app/imports", headers=as_("alice@example.com")).text
 
 
 def test_unsupported_pdf_is_reported(client, seeded):
     tok = csrf(client, "alice@example.com")
-    r = client.post(f"/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                     files={"file": ("statement.pdf", b"%PDF-1.4 fake", "application/pdf")})
     assert "format not supported yet" in r.text
 
@@ -171,13 +180,13 @@ def test_unsupported_pdf_is_reported(client, seeded):
 def test_upload_size_limit(client, seeded):
     tok = csrf(client, "alice@example.com")
     big = b"date,amount,description\n" + b"2026-10-01,-1,X\n" * 400_000
-    r = client.post(f"/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                     files={"file": ("big.csv", big, "text/csv")})
     assert r.status_code == 413
 
 
 def test_security_headers(client):
-    r = client.get("/", headers=as_("alice@example.com"))
+    r = client.get("/app", headers=as_("alice@example.com"))
     assert "script-src 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-frame-options"] == "DENY" and r.headers["cache-control"] == "no-store"
 
@@ -185,7 +194,7 @@ def test_security_headers(client):
 def test_demo_tenant_renders(conn, db_url):
     load_demo(Repo(conn))
     app = create_app(lambda: psycopg.connect(db_url, autocommit=True), DevAuth("demo@saku.local"), SECRET)
-    page = TestClient(app).get("/").text
+    page = TestClient(app).get("/app").text
     assert "your September" in page and "Rp14.445.020" in page  # matches the CLI demo output
 
 
@@ -233,7 +242,7 @@ def test_unsigned_email_header_alone_is_not_identity(keypair, seeded):
     _, jwks = keypair
     app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
                      CloudflareAccessAuth(TEAM, AUD, lambda: jwks), SECRET)
-    r = TestClient(app).get("/", headers={"cf-access-authenticated-user-email": "alice@example.com"})
+    r = TestClient(app).get("/app", headers={"cf-access-authenticated-user-email": "alice@example.com"})
     assert r.status_code == 401 and "alice salary" not in r.text.lower()
 
 
@@ -241,7 +250,7 @@ def test_full_request_with_valid_jwt(keypair, seeded):
     priv, jwks = keypair
     app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
                      CloudflareAccessAuth(TEAM, AUD, lambda: jwks), SECRET)
-    r = TestClient(app).get("/", headers={"cf-access-jwt-assertion": token(priv)})
+    r = TestClient(app).get("/app", headers={"cf-access-jwt-assertion": token(priv)})
     assert r.status_code == 200 and "alice salary" in r.text.lower()
 
 
@@ -269,17 +278,17 @@ def test_upload_via_picker_route(client, seeded):
     """POST /imports takes the account from the form; tenant and CSRF checks still apply."""
     body = b"date,amount,description\n2026-09-10,1000,PICKER TEST\n"
     alice = "alice@example.com"
-    r = client.post("/imports", data={"csrf": "wrong", "account_id": str(seeded["alice_acc"])},
+    r = client.post("/app/imports", data={"csrf": "wrong", "account_id": str(seeded["alice_acc"])},
                     files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
     assert r.status_code == 403
     tok = csrf(client, alice)
-    r = client.post("/imports", data={"csrf": tok, "account_id": str(seeded["bob_acc"])},
+    r = client.post("/app/imports", data={"csrf": tok, "account_id": str(seeded["bob_acc"])},
                     files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
     assert r.status_code == 404
-    r = client.post("/imports", data={"csrf": tok, "account_id": str(seeded["alice_acc"])},
+    r = client.post("/app/imports", data={"csrf": tok, "account_id": str(seeded["alice_acc"])},
                     files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
     assert r.status_code == 303
-    assert "picker test" in client.get("/", headers=as_(alice)).text.lower()
+    assert "picker test" in client.get("/app", headers=as_(alice)).text.lower()
 
 
 # ---- signing keys unreachable (found in the first production deploy) -----------------------------------
@@ -289,7 +298,7 @@ def test_unreachable_jwks_is_503_not_500(keypair, seeded):
         raise OSError("Temporary failure in name resolution")
     app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
                      CloudflareAccessAuth(TEAM, AUD, down), SECRET)
-    r = TestClient(app, raise_server_exceptions=False).get("/", headers={"cf-access-jwt-assertion": token(priv)})
+    r = TestClient(app, raise_server_exceptions=False).get("/app", headers={"cf-access-jwt-assertion": token(priv)})
     assert r.status_code == 503 and "could not reach Cloudflare" in r.text
     assert "alice salary" not in r.text.lower()
 

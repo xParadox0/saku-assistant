@@ -1,0 +1,154 @@
+{% from "_macros.html" import icon, chip, acct_icon %}
+{% if not month %}
+  <section class="welcome with-photo rise">
+    <span class="welcome-mark" aria-hidden="true">{{ icon('i-wallet') }}</span>
+    <h1>Let's set up your first account</h1>
+    <p>Three short steps. Saku never needs your bank login.</p>
+    <ol class="steps">
+      <li><span class="step-n">1</span><div><b>Add an account</b><span>Give it a name, like "Daily spending".</span></div></li>
+      <li><span class="step-n">2</span><div><b>Upload its statement</b><span>A CSV file from your bank or the Saku template.</span></div></li>
+      <li><span class="step-n">3</span><div><b>See your month</b><span>Income, spending and where it went, across every account.</span></div></li>
+    </ol>
+    <a class="button" href="/app/accounts">{{ icon('i-plus') }}Add an account</a>
+  </section>
+{% else %}
+  <header class="hello banner rise">
+    <div>
+      <p class="greet">{% if demo %}{{ t.demo_greeting }}{% else %}{{ hello }}, {{ first_name }}{% endif %}</p>
+      <h1>Here is your {{ cf.start.strftime('%B') }}</h1>
+      <p class="lede">{{ accounts|length }} accounts, {{ cf.transactions }} transactions.
+        {% if covered < days %}Data runs to day {{ covered }} of {{ days }}.{% endif %}</p>
+    </div>
+    {% if not demo %}<a class="button" href="/app/accounts#upload">{{ icon('i-upload') }}Upload statement</a>{% endif %}
+  </header>
+
+  <div class="bento">
+    <section class="card hero rise d1" aria-label="This month">
+      <div class="hero-top">
+        <span class="k">{{ 'Left this month' if cf.net >= 0 else 'Over budget this month' }}</span>
+        {% if prev %}
+          {% set d = cf.net - prev.net %}
+          <span class="delta {{ 'up' if d >= 0 else 'down' }}">{{ icon('i-arrow-out' if d >= 0 else 'i-arrow-in') }}{{ d|signed_rupiah }} vs {{ prev.start.strftime('%b') }}</span>
+        {% endif %}
+      </div>
+      <strong class="big {{ 'neg' if cf.net < 0 else '' }}">{{ cf.net|rupiah }}</strong>
+      {% if saved_pct is not none %}
+      <div class="kept">
+        <svg class="meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
+          <rect class="meter-track" width="100" height="6" rx="3"/>
+          <rect class="meter-fill grow" width="{{ kept_bar }}" height="6" rx="3"/>
+        </svg>
+        <span>You kept <b>{{ saved_pct }}%</b> of what came in</span>
+      </div>
+      {% endif %}
+      <div class="flows">
+        <div class="flow">
+          <span class="flow-ic in">{{ icon('i-arrow-in') }}</span>
+          <div><span class="k">Money in</span><b>{{ cf.income|rupiah }}</b></div>
+        </div>
+        <div class="flow">
+          <span class="flow-ic out">{{ icon('i-arrow-out') }}</span>
+          <div><span class="k">Money out</span><b>{{ cf.spending|rupiah }}</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card where rise d2" aria-label="Where the money went">
+      <div class="card-head"><h2>Where it went</h2><span class="hint">{{ donut|length }} categories</span></div>
+      <div class="where-body">
+        <div class="donut">
+          <svg viewBox="0 0 42 42" aria-hidden="true">
+            <circle class="donut-track" cx="21" cy="21" r="15.9155"/>
+            {% for s in donut %}
+            <circle class="seg {{ s.colour }}" cx="21" cy="21" r="15.9155" pathLength="100"
+                    stroke-dasharray="{{ s.dash }} {{ 100 - s.dash }}" stroke-dashoffset="{{ s.offset }}"><title>{{ s.name }}: {{ s.pct }}%</title></circle>
+            {% endfor %}
+          </svg>
+          <div class="donut-mid"><span class="k">Spent</span><b>{{ cf.spending|rupiah_short }}</b></div>
+        </div>
+        <ul class="legend-list">
+          {% for s in donut[:6] %}
+          <li>
+            <span class="chip {{ s.colour }}">{{ icon(s.icon) }}</span>
+            <span class="lg-name">{{ s.name }}<small>{{ s.count }} payments</small></span>
+            <span class="lg-val">{{ s.amount|rupiah_short }}<small>{{ s.pct }}%</small></span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+
+    {% if notes %}
+    <section class="notes rise d3" aria-label="What stands out">
+      {% for n in notes %}
+      <article class="note-card {{ n.tone }}">
+        <span class="note-ic">{{ icon(n.icon) }}</span>
+        <div><h3>{{ n.title }}</h3><p>{{ n.body }}</p></div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    <section class="card trend rise d4">
+      <div class="card-head">
+        <h2>Month by month</h2>
+        <p class="legend"><span><i class="li"></i>In</span><span><i class="ls"></i>Out</span></p>
+      </div>
+      <svg class="chart" viewBox="0 0 {{ chart.w }} {{ chart.h }}" role="img" aria-label="Income and spending per month">
+        <line class="base" x1="0" y1="{{ chart.base }}" x2="{{ chart.w }}" y2="{{ chart.base }}"/>
+        {% for b in chart.bars %}
+        <g class="bar-group"><title>{{ b.title }}</title>
+          <rect class="bi grow-y" x="{{ b.x_in }}" y="{{ b.y_in }}" width="{{ b.w }}" height="{{ b.h_in }}" rx="6"/>
+          <rect class="bs grow-y" x="{{ b.x_out }}" y="{{ b.y_out }}" width="{{ b.w }}" height="{{ b.h_out }}" rx="6"/>
+          <text class="val" x="{{ b.x_in + b.w / 2 }}" y="{{ b.y_in - 8 }}" text-anchor="middle">{{ b.v_in }}</text>
+          <text class="val" x="{{ b.x_out + b.w / 2 }}" y="{{ b.y_out - 8 }}" text-anchor="middle">{{ b.v_out }}</text>
+          <text x="{{ b.lx }}" y="{{ chart.base + 24 }}" text-anchor="middle">{{ b.label }}</text>
+        </g>
+        {% endfor %}
+      </svg>
+    </section>
+
+    <section class="card accts rise d4">
+      <div class="card-head"><h2>Accounts</h2>{% if not demo %}<a class="link" href="/app/accounts">Manage {{ icon('i-chevron') }}</a>{% endif %}</div>
+      <ul class="acct-list">
+        {% for a in cf.by_account %}
+        <li>
+          <span class="acct-ic">{{ icon('i-wallet') }}</span>
+          <span class="lg-name">{{ a.label }}<small>{{ a.transactions }} transactions</small></span>
+          <span class="acct-flow"><span class="income">+{{ a.money_in|rupiah_short }}</span><span>-{{ a.money_out|rupiah_short }}</span></span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card recent rise d5">
+      <div class="card-head"><h2>Latest activity</h2>{% if not demo %}<a class="link" href="/app/imports">Import history {{ icon('i-chevron') }}</a>{% endif %}</div>
+      <ul class="tx-list">
+        {% for t in recent %}
+        <li class="{{ 'is-transfer' if t.kind == 'own_transfer' else '' }}">
+          {{ chip(t.category) }}
+          <span class="tx-main"><b>{{ t.description|title }}</b><small>{{ cat(t.category)[0] }} · {{ t.account }}</small></span>
+          <span class="tx-side"><b class="{{ 'income' if t.amount > 0 and t.kind == 'normal' else '' }}">{{ t.amount|signed_rupiah }}</b><small>{{ t.booked_on.strftime('%-d %b') }}</small></span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card repeat rise d5">
+      <div class="card-head"><h2>Repeats every month</h2></div>
+      {% if recurring %}
+      <ul class="tx-list">
+        {% for r in recurring[:5] %}
+        <li>
+          {{ chip(r.category) }}
+          <span class="tx-main"><b>{{ r.description|title }}</b><small>Seen in {{ r.months }} months · last {{ r.last.strftime('%-d %b') }}</small></span>
+          <span class="tx-side"><b>{{ r.average|rupiah }}</b><small>a month</small></span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="lede small">No repeating bills or subscriptions found yet. Saku needs at least two months of data to spot them.</p>
+      {% endif %}
+    </section>
+  </div>
+{% endif %}
