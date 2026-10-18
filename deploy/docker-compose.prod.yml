@@ -35,7 +35,7 @@ services:
       SAKU_SECRET: ${SAKU_SECRET:?set in .env}
       SAKU_BOT_USERNAME: ${SAKU_BOT_USERNAME:-}
     depends_on: { db: { condition: service_healthy } }
-    networks: [internal, edge]
+    networks: [internal, edge, egress]   # egress only to fetch Cloudflare Access signing keys; no published ports
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]

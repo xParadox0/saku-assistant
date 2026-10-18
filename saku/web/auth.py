@@ -18,6 +18,10 @@ class AuthError(Exception):
     """The request carries no valid identity."""
 
 
+class AuthUnavailable(Exception):
+    """Identity could not be checked right now (signing keys unreachable). Not the user's fault."""
+
+
 @dataclass(frozen=True)
 class Identity:
     email: str
@@ -44,8 +48,15 @@ class CloudflareAccessAuth:
         stale = time.time() - self._fetched_at > 3600
         unknown_and_allowed = kid not in self._keys and time.time() - self._fetched_at > 60
         if stale or unknown_and_allowed:
-            self._keys = {k["kid"]: k for k in self._fetch().get("keys", []) if "kid" in k}
-            self._fetched_at = time.time()
+            try:
+                fetched = self._fetch()
+            except (OSError, ValueError) as e:  # URLError is an OSError; ValueError covers bad JSON
+                if not self._keys:
+                    raise AuthUnavailable(f"signing keys unreachable: {type(e).__name__}") from None
+                fetched = None  # keep serving with the cached keys
+            if fetched is not None:
+                self._keys = {k["kid"]: k for k in fetched.get("keys", []) if "kid" in k}
+                self._fetched_at = time.time()
         if kid not in self._keys:
             raise AuthError("signing key not recognised")
         return self._keys[kid]
@@ -59,7 +70,7 @@ class CloudflareAccessAuth:
             key = jwt.PyJWK(self._jwk(kid))
             claims = jwt.decode(token, key, algorithms=["RS256"], audience=self.audience, issuer=self.issuer,
                                 options={"require": ["exp", "iat", "aud", "iss"]})
-        except AuthError:
+        except (AuthError, AuthUnavailable):
             raise
         except jwt.PyJWTError as e:
             raise AuthError(f"invalid token: {type(e).__name__}") from None

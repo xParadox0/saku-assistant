@@ -34,7 +34,7 @@ from .. import insights
 from ..categorise import CATEGORIES, label as cat_label
 from ..format import rupiah, rupiah_short, signed_rupiah
 from ..repo import ACCOUNT_KINDS, Repo
-from .auth import AuthError, CloudflareAccessAuth, DevAuth, Identity
+from .auth import AuthError, AuthUnavailable, CloudflareAccessAuth, DevAuth, Identity
 
 HERE = Path(__file__).parent
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -139,6 +139,11 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     @app.exception_handler(AuthError)
     async def _auth(request: Request, exc: AuthError):
         return templates.TemplateResponse(request, "error.html", {"title": "Sign-in required", "message": str(exc)}, status_code=401)
+
+    @app.exception_handler(AuthUnavailable)
+    async def _auth_down(request: Request, exc: AuthUnavailable):
+        return templates.TemplateResponse(request, "error.html", {"title": "Sign-in check unavailable",
+            "message": "Saku could not reach Cloudflare to verify your sign-in. Try again in a minute."}, status_code=503)
 
     @app.exception_handler(Forbidden)
     async def _forbidden(request: Request, exc: Forbidden):

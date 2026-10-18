@@ -280,3 +280,30 @@ def test_upload_via_picker_route(client, seeded):
                     files={"file": ("s.csv", body, "text/csv")}, headers=as_(alice), follow_redirects=False)
     assert r.status_code == 303
     assert "picker test" in client.get("/", headers=as_(alice)).text.lower()
+
+
+# ---- signing keys unreachable (found in the first production deploy) -----------------------------------
+def test_unreachable_jwks_is_503_not_500(keypair, seeded):
+    priv, _ = keypair
+    def down():
+        raise OSError("Temporary failure in name resolution")
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True),
+                     CloudflareAccessAuth(TEAM, AUD, down), SECRET)
+    r = TestClient(app, raise_server_exceptions=False).get("/", headers={"cf-access-jwt-assertion": token(priv)})
+    assert r.status_code == 503 and "could not reach Cloudflare" in r.text
+    assert "alice salary" not in r.text.lower()
+
+
+def test_cached_keys_survive_a_failed_refresh(keypair):
+    priv, jwks = keypair
+    calls = {"n": 0}
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise OSError("network down")
+        return jwks
+    auth = CloudflareAccessAuth(TEAM, AUD, flaky)
+    assert auth.identify({"cf-access-jwt-assertion": token(priv)}).email == "alice@example.com"
+    auth._fetched_at -= 7200  # force a refresh that fails
+    assert auth.identify({"cf-access-jwt-assertion": token(priv)}).email == "alice@example.com"
+    assert calls["n"] == 2
