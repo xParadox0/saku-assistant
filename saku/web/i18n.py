@@ -106,6 +106,9 @@ EN: dict[str, str] = {
     "reg_closed_note": "Registration opens after the privacy policy has been reviewed. Until then only invited members can sign in.",
     "login_members_only": "Saku is invite-only for now. Only approved members receive a code. Registration opens after the privacy review.",
     "login_code_members_hint": "No email after a few minutes? Check the spelling. Right now codes go only to approved members.",
+    "reg_step1": "Step 1 of 2 · Confirm your email",
+    "reg_step1_lead": "First we check that the email is yours. We send a 6-digit code, then you fill in a short form.",
+    "reg_step2": "Step 2 of 2 · Your request",
     "signout": "Sign out",
 }
 

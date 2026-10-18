@@ -97,5 +97,8 @@ ID: dict[str, str] = {
     "reg_closed_note": "Pendaftaran dibuka setelah kebijakan privasi selesai ditinjau. Sampai saat itu, hanya member undangan yang bisa masuk.",
     "login_members_only": "Saat ini Saku hanya untuk member undangan. Kode hanya dikirim ke member yang sudah disetujui. Pendaftaran dibuka setelah tinjauan privasi selesai.",
     "login_code_members_hint": "Belum ada email setelah beberapa menit? Cek ejaan alamatnya. Untuk sekarang, kode hanya dikirim ke member yang sudah disetujui.",
+    "reg_step1": "Langkah 1 dari 2 · Konfirmasi email",
+    "reg_step1_lead": "Kami cek dulu bahwa email ini milikmu. Kami kirim kode 6 digit, lalu kamu isi formulir singkat.",
+    "reg_step2": "Langkah 2 dari 2 · Permintaanmu",
     "signout": "Keluar",
 }

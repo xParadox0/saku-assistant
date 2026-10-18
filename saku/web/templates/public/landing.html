@@ -7,7 +7,7 @@
     <h1>{{ t.hero_title_a }}<br>{{ t.hero_title_b }} <em>{{ t.hero_title_em }}</em></h1>
     <p class="lede">{{ t.hero_lead }}</p>
     <div class="cta">
-      {% if reg_open %}<a class="button" href="/app">{{ t.cta_register }}</a>
+      {% if reg_open %}<a class="button" href="/login?next=/app/register">{{ t.cta_register }}</a>
       <a class="button quiet" href="/demo">{{ t.cta_demo }}</a>
       {% else %}<a class="button" href="/demo">{{ t.cta_demo }}</a>{% endif %}
     </div>

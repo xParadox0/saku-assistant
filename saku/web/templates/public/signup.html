@@ -4,6 +4,7 @@
 {% block content %}
 <section class="card signup rise">
   {% if state == 'form' %}
+    <p class="step-tag">{{ t.reg_step2 }}</p>
     <h1>{{ t.signup_title }}</h1>
     <p class="lede small">{{ t.signup_lead.format(email=email) }}</p>
     {% if error %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.signup_invalid }}</span></p>{% endif %}

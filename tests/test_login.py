@@ -286,3 +286,16 @@ def test_closed_registration_is_explained_not_a_dead_end(world, db_url, tmp_path
     assert "invite-only" in c.get("/login").text
     c2, _ = make(db_url, tmp_path, Beta(registration_open=True, policy_reviewed=i18n.POLICY_VERSION))
     assert "Request beta access" in c2.get("/").text and "invite-only" not in c2.get("/login").text
+
+
+def test_request_access_is_a_two_step_flow_that_ends_on_the_form(world, db_url, tmp_path):
+    c, mailer = make(db_url, tmp_path, Beta(registration_open=True, policy_reviewed=i18n.POLICY_VERSION))
+    assert 'href="/login?next=/app/register"' in c.get("/").text
+    page = c.get("/login?next=/app/register").text
+    assert "Step 1 of 2" in page and 'name="next" value="/app/register"' in page
+    r = c.post("/login", data={"csrf": form_csrf(page), "email": "new@example.com", "next": "/app/register"})
+    assert "Step 1 of 2" in r.text
+    r = c.post("/login/code", data={"csrf": form_csrf(c.get("/login").text), "email": "new@example.com",
+                                    "code": mailer.sent[-1][1], "next": "/app/register"}, follow_redirects=False)
+    assert r.headers["location"] == "/app/register"
+    assert "Step 2 of 2" in c.get("/app/register").text

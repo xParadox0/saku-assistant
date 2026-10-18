@@ -5,8 +5,14 @@
 <section class="card signup login rise">
   <span class="welcome-mark" aria-hidden="true"><img src="/static/brand/saku-mark.svg" alt=""></span>
   {% if step == 'email' %}
+    {% if next == '/app/register' %}
+    <p class="step-tag">{{ t.reg_step1 }}</p>
+    <h1>{{ t.signup_title }}</h1>
+    <p class="lede small">{{ t.reg_step1_lead }}</p>
+    {% else %}
     <h1>{{ t.login_title }}</h1>
     <p class="lede small">{{ t.login_lead }}</p>
+    {% endif %}
     {% if not reg_open %}<p class="notice">{{ icon('i-shield') }}<span>{{ t.login_members_only }}</span></p>{% endif %}
     {% if error == 'email' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_email }}</span></p>{% endif %}
     {% if error == 'limited' %}<p class="notice bad">{{ icon('i-alert') }}<span>{{ t.login_err_limited }}</span></p>{% endif %}
@@ -20,6 +26,7 @@
     </form>
     <p class="hint">{{ t.login_no_password }}</p>
   {% else %}
+    {% if next == '/app/register' %}<p class="step-tag">{{ t.reg_step1 }}</p>{% endif %}
     <h1>{{ t.login_code_title }}</h1>
     <p class="lede small">{{ t.login_code_lead.format(email=email) }}</p>
     {% if not reg_open %}<p class="hint">{{ t.login_code_members_hint }}</p>{% endif %}
