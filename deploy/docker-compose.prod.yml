@@ -58,8 +58,10 @@ services:
       DATABASE_URL: postgresql://saku:${POSTGRES_PASSWORD}@db:5432/saku
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set in .env}
       SAKU_AGENT_SOCKET: /run/saku-agent/agent.sock
+      SAKU_STT_SOCKET: /run/saku-stt/stt.sock
     volumes:
       - /home/yona/.local/run/saku-agent:/run/saku-agent:ro
+      - /home/yona/.local/run/saku-stt:/run/saku-stt:ro
     depends_on: { db: { condition: service_healthy } }
     networks: [internal, egress]
     read_only: true

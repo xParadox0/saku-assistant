@@ -1,0 +1,26 @@
+[Unit]
+Description=Saku local speech-to-text bridge (faster-whisper small, Indonesian, sandboxed)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/finance-assistant
+# One-time setup on the host (not inside the bot image; the model libraries are large):
+#   uv venv --python 3.12 ~/.local/share/saku-stt/venv
+#   uv pip install --python ~/.local/share/saku-stt/venv/bin/python 'faster-whisper==1.2.1' 'av>=11,<16'
+#   copy the converted "small" model directory to ~/.local/share/saku-stt/models/small
+# saku-stt-sandbox.sh runs the bridge under bubblewrap: no network, no capabilities, empty /home except the
+# virtualenv, the model and the saku package (read-only), and the socket directory (read-write).
+ExecStart=%h/projects/finance-assistant/deploy/saku-stt-sandbox.sh
+Restart=on-failure
+RestartSec=5
+# No NoNewPrivileges/PrivateTmp here: on Ubuntu, bwrap may create user namespaces only through its AppArmor
+# profile, and NoNewPrivileges blocks that profile transition. bwrap itself sets no_new_privs for the bridge.
+# Measured: ~740-830 MB RSS with the small model loaded. The model unloads after 15 minutes idle.
+MemoryMax=1200M
+TasksMax=64
+CPUQuota=200%
+Nice=10
+
+[Install]
+WantedBy=default.target
