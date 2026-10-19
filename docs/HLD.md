@@ -86,6 +86,7 @@ E-wallet top-ups usually also appear as an outflow on a bank statement. The norm
 
 ### 3.3a Web transaction management
 - `/app/transactions` is a tenant-scoped CRUD surface for manual rows. It uses the same `txn` table and repository layer as statement imports and Telegram entries.
+- Transactions render as compact summary rows by default. A keyboard-accessible disclosure opens the edit and delete controls for one row without forcing every transaction into an always-open form.
 - Every create, edit and delete request requires the user's CSRF token and an account belonging to the current tenant. Deleting one side of a paired own transfer deletes both sides together.
 - Amounts are signed at the form boundary: negative is money out and positive is money in. Passwords, PINs, OTPs and full account numbers are not accepted or stored.
 
