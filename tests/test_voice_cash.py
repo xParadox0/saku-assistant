@@ -261,11 +261,44 @@ def test_cash_word_never_matches_a_non_cash_account_label(repo, conn):
     assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id='carol'").fetchone()[0] == 0
 
 
-def test_cash_is_only_offered_when_the_message_asked_for_cash(alice, conn):
-    bot.handle(alice, text_upd(ALICE_TG, "bayar parkir mobil 5 ribu"), agent=FixedAgent(PARKIR))   # no cash word
+def test_question_offers_a_new_cash_account_when_none_exists(alice, conn):
+    """Most tenants have no cash account yet. The account question must offer Cash, and 'cash' must work."""
+    first = bot.handle(alice, text_upd(ALICE_TG, "bayar parkir mobil 5 ribu"), agent=FixedAgent(PARKIR))[0].text
+    assert "Cash" in first and first.index("Cash") < first.index("Alice BCA")
     nothing = {"intent": "unknown", "transactions": []}
-    bot.handle(alice, text_upd(ALICE_TG, "cash"), agent=FixedAgent(nothing))
-    assert alice.c.execute("SELECT count(*) FROM account WHERE tenant_id='alice' AND kind='cash'").fetchone()[0] == 0
+    reply = bot.handle(alice, text_upd(ALICE_TG, "cash"), agent=FixedAgent(nothing))[0].text
+    assert reply.startswith("Account Cash dibuat.") and "Berhasil disimpan" in reply
+    assert count(conn, "cash") == 1
+
+
+def test_cash_word_in_message_is_used_when_the_agent_drops_it(alice, conn):
+    """Haiku may return account_hint=null for 'cash' when no cash account exists. The text still says cash."""
+    reply = bot.handle(alice, text_upd(ALICE_TG, "bayar parkir mobil 5 ribu pakai uang tunai"),
+                       agent=FixedAgent(PARKIR))[0].text
+    assert "belum punya account cash" in reply
+    reply = bot.handle(alice, text_upd(ALICE_TG, "Cash"), agent=FixedAgent({"intent": "unknown", "transactions": []}))[0].text
+    assert "Berhasil disimpan" in reply and count(conn, "cash") == 1
+
+
+def test_cash_word_fallback_saves_directly_when_a_cash_account_exists(alice, conn):
+    alice.add_account("alice", "cash", "cash", "Dompet")
+    reply = bot.handle(alice, text_upd(ALICE_TG, "beli kopi 18rb tunai"), agent=FixedAgent(PARKIR))[0].text
+    assert "Berhasil disimpan" in reply and count(conn, "cash") == 1
+
+
+def test_cash_word_fallback_does_not_guess_for_several_rows(alice, conn):
+    alice.add_account("alice", "cash", "cash", "Dompet")
+    two = {"intent": "record", "transactions": [
+        {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": None},
+        {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": None}]}
+    reply = bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb, parkir 5rb cash"), agent=FixedAgent(two))[0].text
+    assert "belum jelas" in reply and count(conn, "cash") == 0
+
+
+def test_cashback_is_not_a_cash_word(alice, conn):
+    alice.add_account("alice", "cash", "cash", "Dompet")
+    reply = bot.handle(alice, text_upd(ALICE_TG, "dapat cashback 5rb"), agent=FixedAgent(PARKIR))[0].text
+    assert "belum jelas" in reply and count(conn, "cash") == 0
 
 
 def test_cash_account_is_not_left_behind_when_the_save_is_refused(alice, conn):
