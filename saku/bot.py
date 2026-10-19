@@ -206,15 +206,38 @@ class TelegramAPI:
             raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
         self._base = f"https://api.telegram.org/bot{token}/"
 
-    def call(self, method: str, timeout: int = 40, **params) -> dict:
+    def call(self, method: str, request_timeout: int = 20, **params) -> dict:
         data = urllib.parse.urlencode({k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                                        for k, v in params.items()}).encode()
         req = urllib.request.Request(self._base + method, data=data)
-        with urllib.request.urlopen(req, timeout=timeout) as response:
+        with urllib.request.urlopen(req, timeout=request_timeout) as response:
             body = json.load(response)
         if not body.get("ok"):
             raise RuntimeError(f"telegram {method} failed: {body.get('description')}")
         return body["result"]
+
+
+def poll_once(conn_factory, api: TelegramAPI, offset: int | None, agent=None) -> int | None:
+    updates = api.call(
+        "getUpdates", request_timeout=40, timeout=25, offset=offset or "", allowed_updates=["message"]
+    )
+    next_offset = offset
+    for update in updates:
+        conn = conn_factory()
+        try:
+            repo = Repo(conn)
+            for reply in handle(repo, update, agent=agent):
+                api.call("sendMessage", chat_id=reply.chat_id, text=reply.text)
+            next_offset = update["update_id"] + 1  # advance only after every reply was delivered
+        finally:
+            conn.close()
+
+    heartbeat_conn = conn_factory()
+    try:
+        Repo(heartbeat_conn).beat("_system", "telegram_bot")
+    finally:
+        heartbeat_conn.close()
+    return next_offset
 
 
 def run_polling(conn_factory, token: str | None = None, agent=None) -> None:
@@ -230,17 +253,7 @@ def run_polling(conn_factory, token: str | None = None, agent=None) -> None:
     offset = None
     while True:
         try:
-            updates = api.call("getUpdates", timeout=40, offset=offset or "", allowed_updates=["message"])
-            for update in updates:
-                conn = conn_factory()
-                try:
-                    repo = Repo(conn)
-                    for reply in handle(repo, update, agent=agent):
-                        api.call("sendMessage", chat_id=reply.chat_id, text=reply.text)
-                    repo.beat("_system", "telegram_bot")
-                    offset = update["update_id"] + 1  # advance only after every reply was delivered
-                finally:
-                    conn.close()
+            offset = poll_once(conn_factory, api, offset, agent=agent)
         except Exception as exc:  # noqa: BLE001  keep polling; never log message contents
             log.warning("poll error: %s", type(exc).__name__)
             time.sleep(5)

@@ -2,6 +2,8 @@
 expire, are stored only as hashes, and one member's code can never attach to another member's tenant."""
 from datetime import date
 from decimal import Decimal
+import io
+import urllib.parse
 
 import psycopg
 import pytest
@@ -187,6 +189,52 @@ def test_chat_refuses_incomplete_or_unavailable_agent_without_silent_loss(two, c
     assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before
     assert "Belum disimpan" in missing and "nominal" in missing.lower()
     assert "tidak ada data yang disimpan" in unavailable.lower()
+
+
+def test_telegram_long_poll_separates_server_and_network_timeouts(monkeypatch):
+    captured = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+    def fake_urlopen(request, timeout):
+        captured["network_timeout"] = timeout
+        captured["params"] = urllib.parse.parse_qs(request.data.decode())
+        return Response(b'{"ok": true, "result": []}')
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", fake_urlopen)
+    result = bot.TelegramAPI("123:synthetic").call(
+        "getUpdates", request_timeout=40, timeout=25, offset="", allowed_updates=["message"]
+    )
+
+    assert result == []
+    assert captured["network_timeout"] == 40
+    assert captured["params"]["timeout"] == ["25"]
+    assert captured["params"]["allowed_updates"] == ['["message"]']
+
+
+def test_empty_poll_still_refreshes_bot_heartbeat(db_url, conn):
+    class EmptyAPI:
+        def call(self, method, **params):
+            assert method == "getUpdates"
+            assert params["timeout"] == 25
+            assert params["request_timeout"] == 40
+            return []
+
+    def conn_factory():
+        from saku.db import connect
+        return connect(db_url)
+
+    assert bot.poll_once(conn_factory, EmptyAPI(), None, agent=None) is None
+    with psycopg.connect(db_url, autocommit=True) as conn:
+        row = conn.execute(
+            "SELECT last_ok FROM heartbeat WHERE tenant_id = '_system' AND component = 'telegram_bot'"
+        ).fetchone()
+    assert row and row[0] is not None
 
 
 def test_group_chats_and_bots_are_ignored(two):
