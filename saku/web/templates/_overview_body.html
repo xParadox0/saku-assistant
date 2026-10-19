@@ -1,16 +1,50 @@
 {% from "_macros.html" import icon, chip, acct_icon %}
 {% if not month %}
-  <section class="welcome with-photo rise">
-    <span class="welcome-mark" aria-hidden="true"><img src="/static/brand/saku-mark.svg" alt=""></span>
-    <h1>Let's set up your first account</h1>
-    <p>Three short steps. Saku never needs your bank login.</p>
-    <ol class="steps">
-      <li><span class="step-n">1</span><div><b>Add an account</b><span>Give it a name, like "Daily spending".</span></div></li>
-      <li><span class="step-n">2</span><div><b>Upload its statement</b><span>A CSV file from your bank or the Saku template.</span></div></li>
-      <li><span class="step-n">3</span><div><b>See your month</b><span>Income, spending and where it went, across every account.</span></div></li>
-    </ol>
-    <a class="button" href="/app/accounts">{{ icon('i-plus') }}Add an account</a>
-  </section>
+  <header class="hello banner rise empty-dash-head">
+    <div>
+      <p class="greet">Dashboard</p>
+      <h1>Your money, at a glance</h1>
+      <p class="lede">Your summary and analysis will appear here after the first statement import.</p>
+    </div>
+    <a class="button" href="/app/accounts">{{ icon('i-plus') }}Add your first account</a>
+  </header>
+
+  <div class="bento empty-bento" aria-label="Dashboard summary and analysis">
+    <section class="card empty-summary rise d1">
+      <div class="card-head"><h2>Monthly summary</h2><span class="hint">No imported transactions yet</span></div>
+      <div class="summary-placeholders">
+        <article><span class="flow-ic in">{{ icon('i-arrow-in') }}</span><div><span class="k">Money in</span><b>—</b><small>Current month</small></div></article>
+        <article><span class="flow-ic out">{{ icon('i-arrow-out') }}</span><div><span class="k">Money out</span><b>—</b><small>Current month</small></div></article>
+        <article><span class="flow-ic net">{{ icon('i-wallet') }}</span><div><span class="k">Net cash flow</span><b>—</b><small>Income minus spending</small></div></article>
+      </div>
+    </section>
+
+    <section class="card empty-analysis rise d2">
+      <div class="card-head"><h2>Spending analysis</h2><span class="hint">By category</span></div>
+      <div class="analysis-placeholder" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <p class="lede small">Import a statement to see where your money goes and which categories changed.</p>
+    </section>
+
+    <section class="card empty-accounts rise d3">
+      <div class="card-head"><h2>Account overview</h2><a class="link" href="/app/accounts">Manage {{ icon('i-chevron') }}</a></div>
+      {% if accounts %}
+      <ul class="acct-list">
+        {% for a in accounts %}
+        <li><span class="acct-ic">{{ acct_icon(a.kind) }}</span><span class="lg-name">{{ a.label }}<small>No transactions imported</small></span><span class="empty-value">—</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty-panel-copy"><span class="chip-plus">{{ icon('i-plus') }}</span><div><b>No accounts yet</b><p>Add a bank, e-wallet or cash account to begin.</p></div></div>
+      {% endif %}
+    </section>
+
+    <section class="card empty-recent rise d4">
+      <div class="card-head"><h2>Latest activity</h2><span class="hint">Across all accounts</span></div>
+      <div class="empty-panel-copy"><span class="empty-activity-icon">{{ icon('i-file') }}</span><div><b>Nothing to review yet</b><p>Your newest transactions will appear here after an import.</p></div></div>
+    </section>
+  </div>
 {% else %}
   <header class="hello banner rise">
     <div>

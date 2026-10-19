@@ -119,4 +119,4 @@
   <p class="hint">{{ icon('i-shield') }} Only the last 4 digits are kept. Never enter a full account number, password, PIN or OTP.</p>
 </section>
 {% endblock %}
-{% block scripts %}<script src="/static/accounts.js" defer></script>{% endblock %}
+{% block scripts %}<script src="/static/accounts.js?v={{ asset_version }}" defer></script>{% endblock %}

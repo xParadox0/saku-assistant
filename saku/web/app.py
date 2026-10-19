@@ -43,6 +43,9 @@ from .login import GraphMailer, Login, MailError, OutboxMailer, normalise_email
 HERE = Path(__file__).parent
 DEMO_TENANT = "demo"
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+ASSET_VERSION = hashlib.sha256(
+    b"".join((HERE / "static" / name).read_bytes() for name in ("saku.css", "accounts.js"))
+).hexdigest()[:12]
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 PROVIDER_SUGGESTIONS = [
     ("bca", "BCA", "bank"), ("bri", "BRI", "bank"), ("bni", "BNI", "bank"),
@@ -142,6 +145,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     templates.env.filters["signed_rupiah"] = signed_rupiah
     templates.env.filters["rupiah_short"] = rupiah_short
     templates.env.globals["cat"] = cat_label
+    templates.env.globals["asset_version"] = ASSET_VERSION
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     key = secret.encode()
     upload_root = upload_root or tempfile.gettempdir()

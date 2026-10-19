@@ -222,6 +222,27 @@ h3 { font: 600 15px/1.3 var(--text); margin: 0 0 4px; }
 .steps li:nth-child(3) .step-n { background: var(--honey); }
 .empty { background: var(--surface); border-radius: 28px; padding: 48px; max-width: 720px; }
 .empty p { color: var(--muted); max-width: 52ch; }
+.empty-summary { grid-column: span 12; }
+.empty-analysis { grid-column: span 7; }
+.empty-accounts { grid-column: span 5; }
+.empty-recent { grid-column: span 12; }
+.summary-placeholders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.summary-placeholders article { display: flex; gap: 12px; align-items: center; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
+.summary-placeholders b { display: block; margin: 3px 0; font: 900 25px/1 var(--display); }
+.summary-placeholders small { color: var(--faint); font-size: 12px; }
+.flow-ic.net { background: var(--honey); color: var(--ink); }
+.analysis-placeholder { display: flex; align-items: end; gap: 12px; min-height: 132px; padding: 20px 20px 0; border-radius: var(--r-md); background: var(--surface-2); overflow: hidden; }
+.analysis-placeholder span { flex: 1; max-width: 72px; border-radius: 10px 10px 0 0; background: var(--surface-3); }
+.analysis-placeholder span:nth-child(1) { height: 90px; background: var(--mint); }
+.analysis-placeholder span:nth-child(2) { height: 64px; }
+.analysis-placeholder span:nth-child(3) { height: 42px; }
+.analysis-placeholder span:nth-child(4) { height: 76px; background: var(--honey); }
+.empty-analysis .lede { margin-top: 16px; }
+.empty-panel-copy { display: flex; align-items: center; gap: 14px; min-height: 96px; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); }
+.empty-panel-copy p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+.empty-panel-copy .chip-plus, .empty-activity-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 13px; background: var(--accent-soft); color: var(--accent); flex: none; }
+.empty-activity-icon { background: var(--surface-3); color: var(--muted); }
+.empty-value { color: var(--faint); font: 800 20px var(--display); }
 
 /* ---- tables (imports, ops) ------------------------------------------------------------------------ */
 .panel { background: var(--surface); border-radius: var(--r-lg); padding: 24px; margin-top: 16px; overflow-x: auto; }
@@ -336,7 +357,7 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
 
 /* ---- responsive ---------------------------------------------------------------------------------- */
 @media (max-width: 1180px) {
-  .hero, .where, .trend, .accts, .recent, .repeat { grid-column: span 12; }
+  .hero, .where, .trend, .accts, .recent, .repeat, .empty-analysis, .empty-accounts { grid-column: span 12; }
   .where-body { grid-template-columns: 180px minmax(0, 1fr); }
   .donut { width: 180px; height: 180px; }
 }
@@ -370,6 +391,7 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
   .hide-sm { display: none; }
   .drop { grid-template-columns: minmax(0, 1fr); }
   .welcome, .empty { padding: 28px 20px; }
+  .summary-placeholders { grid-template-columns: minmax(0, 1fr); }
 }
 .hint .ic { width: 15px; height: 15px; vertical-align: -3px; color: var(--good); }
 #upload, #add { margin-top: 16px; scroll-margin-top: 20px; }

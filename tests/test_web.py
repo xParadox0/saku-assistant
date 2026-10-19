@@ -152,7 +152,7 @@ def test_accounts_form_has_searchable_provider_numeric_last4_and_ewallets(client
     assert 'type="search" name="provider"' in page
     assert "<datalist" not in page
     assert 'role="listbox"' in page and 'data-kind="bank"' in page and 'data-kind="ewallet"' in page
-    assert '<script src="/static/accounts.js" defer></script>' in page
+    assert '/static/accounts.js?v=' in page and 'defer></script>' in page
     assert 'class="grid-form account-form"' in page
     assert 'type="number" name="last4"' in page
     for provider in ("GoPay", "OVO", "DANA", "ShopeePay", "LinkAja"):
@@ -164,6 +164,22 @@ def test_navigation_calls_app_home_dashboard_and_register_signout_is_a_button(cl
     assert '<span>Dashboard</span>' in page
     pending = client.get("/app/register", headers=as_("stranger@example.com")).text
     assert 'class="button signout-button"' in pending
+
+
+def test_empty_dashboard_keeps_summary_and_analysis_structure(client):
+    page = client.get("/app", headers=as_("ops@example.com")).text
+    for heading in ("Monthly summary", "Spending analysis", "Account overview", "Latest activity"):
+        assert heading in page
+    assert "Add your first account" in page
+
+
+def test_mutable_static_assets_use_cache_busting_versions(client):
+    page = client.get("/app/accounts", headers=as_("alice@example.com")).text
+    assert '/static/saku.css?v=' in page
+    assert '/static/accounts.js?v=' in page
+    assert '<link rel="stylesheet" href="/static/saku.css">' not in page
+    assert '<script src="/static/accounts.js" defer></script>' not in page
+    assert '/static/saku.css?v=' in client.get("/").text
 
 
 def test_csv_upload_imports_dedupes_and_deletes_file(client, seeded, upload_dir):
