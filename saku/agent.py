@@ -34,6 +34,7 @@ def validate_extraction(value: object) -> dict:
         description = raw.get("description")
         amount = raw.get("amount_idr")
         direction = raw.get("direction")
+        kind = raw.get("kind", "normal")
         booked_on = raw.get("date")
         account_hint = raw.get("account_hint")
         if description is not None and (not isinstance(description, str) or not 1 <= len(description.strip()) <= 80):
@@ -42,6 +43,8 @@ def validate_extraction(value: object) -> dict:
             raise AgentError("invalid amount")
         if direction not in {"expense", "income"}:
             raise AgentError("invalid direction")
+        if kind not in {"normal", "own_transfer"}:
+            raise AgentError("invalid kind")
         if booked_on is not None:
             if not isinstance(booked_on, str):
                 raise AgentError("invalid date")
@@ -55,6 +58,7 @@ def validate_extraction(value: object) -> dict:
             "description": description.strip() if description else None,
             "amount_idr": amount,
             "direction": direction,
+            "kind": kind,
             "date": booked_on,
             "account_hint": account_hint.strip() if account_hint else None,
         })

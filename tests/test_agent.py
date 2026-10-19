@@ -29,9 +29,19 @@ def test_bridge_prompt_keeps_user_text_as_data_and_requires_complete_json():
     assert json.dumps("Daily Wallet") in prompt
 
 
+def test_transfer_extraction_requires_two_tagged_sides():
+    extraction = validate_extraction({"intent": "record", "transactions": [
+        {"description": "Transfer out", "amount_idr": 250000, "direction": "expense",
+         "date": None, "account_hint": "Main bank", "kind": "own_transfer"},
+        {"description": "Transfer in", "amount_idr": 250000, "direction": "income",
+         "date": None, "account_hint": "GoPay", "kind": "own_transfer"},
+    ]})
+    assert [row["kind"] for row in extraction["transactions"]] == ["own_transfer", "own_transfer"]
+
+
 def test_bridge_reads_only_the_final_hermes_result_event():
     extraction = {"intent": "record", "transactions": [{
-        "description": "Gorengan", "amount_idr": 5000, "direction": "expense",
+        "description": "Gorengan", "amount_idr": 5000, "direction": "expense", "kind": "normal",
         "date": None, "account_hint": None,
     }]}
     stdout = "warning\n" + json.dumps({"type": "text", "text": "draft"}) + "\n" + json.dumps({

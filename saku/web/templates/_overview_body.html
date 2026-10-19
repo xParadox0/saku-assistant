@@ -156,7 +156,7 @@
     </section>
 
     <section class="card recent rise d5">
-      <div class="card-head"><h2>Latest activity</h2>{% if not demo %}<a class="link" href="/app/imports">Import history {{ icon('i-chevron') }}</a>{% endif %}</div>
+      <div class="card-head"><h2>Latest activity</h2>{% if not demo %}<span><a class="link" href="/app/transactions">Manage transactions {{ icon('i-chevron') }}</a> · <a class="link" href="/app/imports">Import history</a></span>{% endif %}</div>
       <ul class="tx-list">
         {% for t in recent %}
         <li class="{{ 'is-transfer' if t.kind == 'own_transfer' else '' }}">

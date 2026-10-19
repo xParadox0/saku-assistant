@@ -51,6 +51,8 @@ Each principle can veto a later design choice.
   - `/start` explains what Saku does, the security boundary, how to link, the commands, and a complete example.
   - Linked text entry uses `claude-haiku-5-5` only for structured extraction. The model receives redacted text and account display labels, never database access or bank credentials. Application code validates every field before writing through `Repo`.
   - Missing data is explicit. The bot says `Belum disimpan`, names the missing field, and keeps a structured 10-minute draft when it only needs the account. The raw chat message is not retained.
+- A transfer between two of the user's accounts is represented by two linked rows: an outflow on the source account and an inflow on the destination account. Both rows use `kind='own_transfer'`, so Dashboard cashflow excludes them while Latest activity still shows both account details.
+- The bot confirmation includes money in, money out or internal-transfer totals plus each saved detail. A transfer is never reported as income or spending.
   - Every accepted message gets a saved, duplicate, missing-data, or unavailable reply. The polling offset advances only after the reply is delivered, so a temporary Telegram send failure retries safely. Manual imports are idempotent by Telegram message id.
   - PDF, CSV and photos remain Stage 1 work. Files will go to a temp directory, be parsed, then deleted.
 
@@ -81,6 +83,11 @@ E-wallet top-ups usually also appear as an outflow on a bank statement. The norm
 - Converts `RawTxn` into the stored shape and computes `fingerprint = sha256(tenant, account, date, amount, normalised_description)` for dedupe.
 - An email notification and a statement line for the same transaction match on account, amount and date within 2 days. The statement version wins.
 - Own-transfer detection pairs an outflow and an inflow of the same amount between the tenant's accounts within 3 days. The pair is marked `kind='own_transfer'` and excluded from income and spending.
+
+### 3.3a Web transaction management
+- `/app/transactions` is a tenant-scoped CRUD surface for manual rows. It uses the same `txn` table and repository layer as statement imports and Telegram entries.
+- Every create, edit and delete request requires the user's CSRF token and an account belonging to the current tenant. Deleting one side of a paired own transfer deletes both sides together.
+- Amounts are signed at the form boundary: negative is money out and positive is money in. Passwords, PINs, OTPs and full account numbers are not accepted or stored.
 
 ### 3.4 Categoriser (F6)
 Order of authority, highest first:
