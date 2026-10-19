@@ -48,7 +48,11 @@ Each principle can veto a later design choice.
   - A Telegram account already linked to another member cannot be taken over with a new code.
   - Unlinked senders get fixed instructions; nothing they send is stored or logged. Group chats are refused.
   - Unlink from the dashboard or with `/unlink`.
-- Accepts text, PDF, CSV and photos (Stage 1). Files go to a temp directory, are parsed, then deleted.
+  - `/start` explains what Saku does, the security boundary, how to link, the commands, and a complete example.
+  - Linked text entry uses `claude-haiku-5-5` only for structured extraction. The model receives redacted text and account display labels, never database access or bank credentials. Application code validates every field before writing through `Repo`.
+  - Missing data is explicit. The bot says `Belum disimpan`, names the missing field, and keeps a structured 10-minute draft when it only needs the account. The raw chat message is not retained.
+  - Every accepted message gets a saved, duplicate, missing-data, or unavailable reply. The polling offset advances only after the reply is delivered, so a temporary Telegram send failure retries safely. Manual imports are idempotent by Telegram message id.
+  - PDF, CSV and photos remain Stage 1 work. Files will go to a temp directory, be parsed, then deleted.
 
 ### 3.2 Importers (F2, F3, F12)
 One parser per source behind one interface:
@@ -320,6 +324,7 @@ Flow:
 4. The browser keeps a short signed cookie that says which address is waiting for a code. It holds no secret.
 5. A correct code creates a session. The session token is 32 random bytes in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie. The database stores only its SHA-256.
 6. Sessions end after 30 days, or after 7 days without use, or on sign out. The server can revoke any session.
+7. Successful navigation remembers one of the fixed authenticated destinations (`/app`, Accounts, Imports, or Settings). A visit to `/` with a live member session redirects there. Missing or invalid state falls back to `/app`; unauthenticated visitors still get the public landing page.
 
 Limits, all counted per HMAC of the email and per HMAC of the client IP (Cloudflare's `CF-Connecting-IP`; the origin is only reachable through the tunnel):
 - 5 code requests per email per hour, 20 per IP per hour. Counted for every address, so hitting the limit says nothing about whether an address has an account.
@@ -346,6 +351,7 @@ CREATE TABLE web_session (
     email        TEXT NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_path    TEXT,                       -- validated against fixed internal /app destinations
     expires_at   TIMESTAMPTZ NOT NULL,  -- 30 days
     revoked_at   TIMESTAMPTZ
 );

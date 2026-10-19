@@ -63,3 +63,13 @@ def test_sql_only_in_repo_layer():
     offenders = [str(p.relative_to(ROOT)) for p in (ROOT / "saku").rglob("*.py")
                  if p.name not in {"repo.py", "db.py"} and ".execute(" in p.read_text()]
     assert offenders == []
+
+
+def test_bot_agent_bridge_is_local_socket_only_and_model_is_pinned():
+    compose = (ROOT / "deploy" / "docker-compose.prod.yml").read_text()
+    unit = (ROOT / "deploy" / "saku-agent-bridge.service").read_text()
+    assert "SAKU_AGENT_SOCKET: /run/saku-agent/agent.sock" in compose
+    assert "/home/yona/.local/run/saku-agent:/run/saku-agent" in compose
+    assert "claude-haiku-5-5" in unit
+    assert "--socket %h/.local/run/saku-agent/agent.sock" in unit
+    assert "0.0.0.0" not in unit

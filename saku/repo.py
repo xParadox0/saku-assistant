@@ -5,6 +5,8 @@ query that forgot the filter; keeping all SQL here means there is one place to r
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -15,6 +17,7 @@ import psycopg
 from .normalise import RawTxn, fingerprints, money, normalise_description
 
 ACCOUNT_KINDS = {"bank", "ewallet", "cash"}
+SAFE_APP_PATHS = {"/app", "/app/accounts", "/app/imports", "/app/settings"}
 
 # A pair only counts as an own transfer when at least one side looks like a transfer or top-up.
 # Without this, a refund that happens to match a purchase amount on another account would be hidden.
@@ -59,6 +62,12 @@ class Repo:
         )
         return [dict(zip(("id", "kind", "provider", "label", "last4"), r)) for r in cur.fetchall()]
 
+    def tenant_timezone(self, tenant_id: str) -> str:
+        row = self.c.execute("SELECT tz FROM tenant WHERE id = %s", (tenant_id,)).fetchone()
+        if row is None:
+            raise ValueError("unknown tenant")
+        return row[0]
+
     def _own_account(self, tenant_id: str, account_id: int) -> None:
         row = self.c.execute(
             "SELECT 1 FROM account WHERE id = %s AND tenant_id = %s", (account_id, tenant_id)
@@ -92,6 +101,38 @@ class Repo:
                 (new, dup, batch_id, tenant_id),
             )
         return ImportResult(batch_id, len(rows), new, dup)
+
+    def import_manual_rows(self, tenant_id: str, account_id: int, rows: list[RawTxn], source_ref: str) -> ImportResult:
+        """Store one chat message atomically and make delivery retries idempotent."""
+        self._own_account(tenant_id, account_id)
+        source_sha = hashlib.sha256(source_ref.encode()).hexdigest()
+        with self.c.transaction():
+            batch_id = self.c.execute(
+                "INSERT INTO import_batch (tenant_id, account_id, source, file_sha256, parser, status, rows_in) "
+                "VALUES (%s, %s, 'manual', %s, 'telegram-agent/1', 'running', %s) RETURNING id",
+                (tenant_id, account_id, source_sha, len(rows)),
+            ).fetchone()[0]
+            new = 0
+            for index, row in enumerate(rows):
+                description = normalise_description(row.description)
+                amount = money(row.amount)
+                fp = hashlib.sha256(
+                    f"{tenant_id}|manual|{source_sha}|{index}|{row.booked_on}|{amount}|{description}".encode()
+                ).hexdigest()
+                got = self.c.execute(
+                    "INSERT INTO txn (tenant_id, account_id, batch_id, booked_on, amount, description, kind, fingerprint) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (tenant_id, fingerprint) DO NOTHING RETURNING id",
+                    (tenant_id, account_id, batch_id, row.booked_on, amount, description, row.kind, fp),
+                ).fetchone()
+                new += got is not None
+            duplicate = len(rows) - new
+            self.c.execute(
+                "UPDATE import_batch SET status = 'ok', rows_new = %s, rows_dup = %s "
+                "WHERE id = %s AND tenant_id = %s",
+                (new, duplicate, batch_id, tenant_id),
+            )
+        return ImportResult(batch_id, len(rows), new, duplicate)
 
     # ---- own transfers --------------------------------------------------------------------------
     def detect_own_transfers(self, tenant_id: str, window_days: int = 3) -> int:
@@ -367,6 +408,30 @@ class Repo:
             raise ValueError("email or telegram_user_id required")
         return n > 0
 
+    def telegram_draft_set(self, telegram_user_id: int, tenant_id: str, payload: dict, ttl_minutes: int = 10) -> None:
+        self.c.execute(
+            "INSERT INTO telegram_draft (telegram_user_id, tenant_id, payload, expires_at) "
+            "VALUES (%s, %s, %s::jsonb, now() + make_interval(mins => %s)) "
+            "ON CONFLICT (telegram_user_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, "
+            "payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at, created_at = now()",
+            (telegram_user_id, tenant_id, json.dumps(payload), ttl_minutes),
+        )
+
+    def telegram_draft_get(self, telegram_user_id: int, tenant_id: str) -> dict | None:
+        self.c.execute(
+            "DELETE FROM telegram_draft WHERE telegram_user_id = %s AND tenant_id = %s AND expires_at <= now()",
+            (telegram_user_id, tenant_id),
+        )
+        row = self.c.execute(
+            "SELECT payload FROM telegram_draft WHERE telegram_user_id = %s AND tenant_id = %s AND expires_at > now()",
+            (telegram_user_id, tenant_id),
+        ).fetchone()
+        return row[0] if row else None
+
+    def telegram_draft_clear(self, telegram_user_id: int, tenant_id: str) -> None:
+        self.c.execute("DELETE FROM telegram_draft WHERE telegram_user_id = %s AND tenant_id = %s",
+                       (telegram_user_id, tenant_id))
+
     # ---- categories and insights --------------------------------------------------------------------
     def apply_categories(self, tenant_id: str) -> int:
         """Label uncategorised rows. Kind first, then income, tenant rules, built-in rules, else 'other'.
@@ -577,6 +642,23 @@ class Repo:
             "AND expires_at > now() AND last_seen > now() - make_interval(secs => %s) RETURNING email",
             (sid_sha256, idle_s)).fetchone()
         return row[0] if row else None
+
+    def session_remember_path(self, sid_sha256: str, path: str) -> bool:
+        if path not in SAFE_APP_PATHS:
+            return False
+        return self.c.execute(
+            "UPDATE web_session SET last_path = %s WHERE sid_sha256 = %s AND revoked_at IS NULL "
+            "AND expires_at > now()",
+            (path, sid_sha256),
+        ).rowcount == 1
+
+    def session_last_path(self, sid_sha256: str) -> str:
+        row = self.c.execute(
+            "SELECT last_path FROM web_session WHERE sid_sha256 = %s AND revoked_at IS NULL AND expires_at > now()",
+            (sid_sha256,),
+        ).fetchone()
+        path = row[0] if row else None
+        return path if path in SAFE_APP_PATHS else "/app"
 
     def session_revoke(self, sid_sha256: str) -> None:
         self.c.execute("UPDATE web_session SET revoked_at = now() WHERE sid_sha256 = %s AND revoked_at IS NULL",

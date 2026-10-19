@@ -163,9 +163,12 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
 
     def identify(request: Request, repo: Repo) -> Identity:
         if login is not None:
-            email = login.session_email(repo, request.cookies.get(SESSION_COOKIE))
+            token = request.cookies.get(SESSION_COOKIE)
+            email = login.session_email(repo, token)
             if not email:
                 raise LoginRequired()
+            if request.method == "GET" and token:
+                repo.session_remember_path(login.token_hash(token), request.url.path)
             return Identity(email)
         return authenticator.identify(request.headers)
 
@@ -421,6 +424,12 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     def landing(request: Request):
         stage = None
         with repo_ctx() as repo:  # example figures come from the synthetic demo tenant only
+            if login is not None:
+                token = request.cookies.get(SESSION_COOKIE)
+                email = login.session_email(repo, token)
+                if email and token:
+                    target = repo.session_last_path(login.token_hash(token)) if repo.member(email) else "/app/register"
+                    return RedirectResponse(target, status_code=303)
             month = repo.latest_month(DEMO_TENANT)
             if month:
                 cf = repo.monthly_series(DEMO_TENANT, month, 1)[-1]

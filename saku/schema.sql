@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS telegram_link (
     linked_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Short-lived structured follow-up state. Raw chat text is never retained.
+CREATE TABLE IF NOT EXISTS telegram_draft (
+    telegram_user_id BIGINT PRIMARY KEY REFERENCES telegram_link(telegram_user_id) ON DELETE CASCADE,
+    tenant_id        TEXT NOT NULL REFERENCES tenant(id),
+    payload          JSONB NOT NULL,
+    expires_at       TIMESTAMPTZ NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS link_code (
     code_hash   TEXT PRIMARY KEY,                -- sha256 of the code; the code itself is never stored
     email       TEXT NOT NULL REFERENCES member(email) ON DELETE CASCADE,
@@ -167,9 +176,11 @@ CREATE TABLE IF NOT EXISTS web_session (
     email        TEXT NOT NULL CHECK (email = lower(email)),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_path    TEXT,
     expires_at   TIMESTAMPTZ NOT NULL,          -- 30 days after creation
     revoked_at   TIMESTAMPTZ
 );
+ALTER TABLE web_session ADD COLUMN IF NOT EXISTS last_path TEXT;
 CREATE INDEX IF NOT EXISTS web_session_email ON web_session (email);
 
 CREATE TABLE IF NOT EXISTS login_event (

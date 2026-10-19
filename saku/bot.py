@@ -1,30 +1,39 @@
-"""Telegram bot, link-first.
+"""Telegram bot with link-first identity and explicit transaction-ingest outcomes.
 
-The bot never trusts a Telegram account on its own. A sender is resolved only through telegram_link, which is
-filled when the member redeems a one-time code made in the dashboard (Settings > Connect Telegram).
-Unlinked senders get instructions and nothing they send is stored or logged.
-
-handle() is pure (repo in, replies out) so it is tested without the network. run_polling() is the thin
-long-polling loop around it; the token comes from TELEGRAM_BOT_TOKEN and is never printed.
+Unlinked senders are never stored. Linked free text is extracted by a narrowly scoped local agent, validated by
+this process, then written through Repo. Every path replies with saved, missing-data, duplicate, or unavailable;
+there is no silent acceptance.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .agent import AgentError, UnixAgentClient, validate_extraction
+from .format import rupiah
+from .normalise import RawTxn
 from .repo import Repo
 
 log = logging.getLogger("saku.bot")
 
-NOT_LINKED = ("This Telegram account is not connected to Saku yet.\n\n"
-              "Open the Saku dashboard, go to Settings, tap \"Connect Telegram\", then press the button it shows. "
-              "Nothing you send here is saved until the account is connected.")
-PRIVATE_ONLY = "Saku only works in a private chat. Please message me directly."
+NOT_LINKED = (
+    "This Telegram account is not connected to Saku yet.\n\n"
+    "Saku membantu mencatat pemasukan dan pengeluaran lewat chat, lalu menampilkannya di Dashboard. "
+    "Saku tidak meminta password bank, PIN, atau OTP dan tidak bisa memindahkan uang.\n\n"
+    "Untuk menghubungkan akun: buka Saku → Settings → Connect Telegram, lalu tekan link yang dibuat. "
+    "Tidak ada pesan yang disimpan sebelum akun terhubung.\n\n"
+    "Commands: /start, /help, /status, /unlink."
+)
+PRIVATE_ONLY = "Saku hanya bekerja lewat private chat. Kirim pesan langsung ke bot ini."
 
 
 @dataclass
@@ -33,7 +42,100 @@ class Reply:
     text: str
 
 
-def handle(repo: Repo, update: dict) -> list[Reply]:
+def _connected_help(email: str) -> str:
+    return (
+        f"Saku terhubung sebagai {email}.\n\n"
+        "Kirim transaksi dengan nominal dan account, misalnya:\n"
+        "• makan 45rb dari GoPay\n"
+        "• gaji 8jt masuk BCA\n\n"
+        "Kalau tanggal tidak disebut, Saku memakai hari ini. Kalau ada data yang kurang, Saku akan bertanya dan "
+        "belum menyimpan transaksi.\n\n"
+        "Saku tidak meminta password bank, PIN, atau OTP dan tidak bisa memindahkan uang.\n"
+        "Commands: /status, /help, /unlink."
+    )
+
+
+def _key(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").casefold())
+
+
+def _match_account(accounts: list[dict], hint: str | None) -> dict | None:
+    if not hint:
+        return accounts[0] if len(accounts) == 1 else None
+    wanted = _key(hint)
+    exact = [a for a in accounts if wanted in {_key(a["label"]), _key(a["provider"])}]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [a for a in accounts if wanted and (wanted in _key(a["label"]) or wanted in _key(a["provider"]))]
+    return partial[0] if len(partial) == 1 else None
+
+
+def _today(repo: Repo, tenant_id: str) -> date:
+    try:
+        tz = ZoneInfo(repo.tenant_timezone(tenant_id))
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("Asia/Jakarta")
+    return datetime.now(tz).date()
+
+
+def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict], today: date,
+            source_ref: str) -> str:
+    transactions = parsed["transactions"]
+    if not transactions:
+        return "Belum disimpan. Saya belum menemukan transaksi. Tulis nominal dan account, misalnya: makan 45rb dari GoPay."
+    missing = []
+    if any(not row.get("description") for row in transactions):
+        missing.append("keterangan")
+    if any(row.get("amount_idr") is None for row in transactions):
+        missing.append("nominal")
+    if missing:
+        return "Belum disimpan. Data yang masih kurang: " + ", ".join(missing) + ". Kirim ulang transaksi dengan data tersebut."
+    if not accounts:
+        return "Belum disimpan. Kamu belum punya account. Tambahkan dulu lewat Dashboard → Accounts."
+
+    resolved = [_match_account(accounts, row.get("account_hint")) for row in transactions]
+    if any(account is None for account in resolved):
+        repo.telegram_draft_set(uid, who["tenant_id"], {"transactions": transactions, "source_ref": source_ref})
+        choices = " / ".join(account["label"] for account in accounts)
+        return f"Belum disimpan. Account yang dipakai belum jelas. Balas salah satu nama account ini: {choices}."
+
+    rows_by_account: dict[int, tuple[dict, list[RawTxn]]] = {}
+    assumed_today = False
+    total = Decimal(0)
+    for item, account in zip(transactions, resolved):
+        booked_on = date.fromisoformat(item["date"]) if item.get("date") else today
+        assumed_today |= item.get("date") is None
+        if booked_on > today or booked_on.year < 2000:
+            return "Belum disimpan. Tanggal transaksi tidak valid. Kirim tanggal yang sudah terjadi dalam format YYYY-MM-DD."
+        amount = Decimal(item["amount_idr"])
+        if item["direction"] == "expense":
+            amount = -amount
+        total += abs(amount)
+        rows_by_account.setdefault(account["id"], (account, []))[1].append(
+            RawTxn(booked_on, amount, item["description"])
+        )
+
+    stored = duplicate = 0
+    labels = []
+    for account_id, (account, rows) in rows_by_account.items():
+        result = repo.import_manual_rows(who["tenant_id"], account_id, rows, f"{source_ref}:{account_id}")
+        stored += result.rows_new
+        duplicate += result.rows_dup
+        labels.append(account["label"])
+    repo.detect_own_transfers(who["tenant_id"])
+    repo.apply_categories(who["tenant_id"])
+    repo.telegram_draft_clear(uid, who["tenant_id"])
+
+    if stored == 0 and duplicate:
+        return "Pesan ini sudah pernah diproses. Tidak ada transaksi duplikat yang disimpan."
+    when = " untuk hari ini" if assumed_today else ""
+    account_text = ", ".join(dict.fromkeys(labels))
+    detail = f" ({duplicate} duplikat dilewati)" if duplicate else ""
+    return (f"Berhasil disimpan: {stored} transaksi, total {rupiah(total)}, account {account_text}{when}{detail}. "
+            "Datanya sudah masuk ke Dashboard.")
+
+
+def handle(repo: Repo, update: dict, agent=None) -> list[Reply]:
     msg = update.get("message") or update.get("edited_message")
     if not msg or "from" not in msg or "chat" not in msg:
         return []
@@ -50,14 +152,12 @@ def handle(repo: Repo, update: dict) -> list[Reply]:
     if cmd == "/start" and arg.strip():
         outcome, email = repo.redeem_link_code(arg.strip(), uid)
         if outcome in ("linked", "relinked"):
-            extra = " Your previous Telegram account was disconnected." if outcome == "relinked" else ""
-            return [Reply(chat["id"], f"Connected to Saku as {email}.{extra}\n\n"
-                                      "Send /status to check, /unlink to disconnect.")]
+            extra = " Telegram sebelumnya sudah diputus." if outcome == "relinked" else ""
+            return [Reply(chat["id"], f"Saku berhasil terhubung sebagai {email}.{extra}\n\n"
+                                      + _connected_help(email))]
         if outcome == "taken":
-            return [Reply(chat["id"], "This Telegram account is already connected to another Saku account. "
-                                      "Disconnect it there first.")]
-        return [Reply(chat["id"], "That link has expired or was already used. "
-                                  "Make a new one in the dashboard: Settings, Connect Telegram.")]
+            return [Reply(chat["id"], "Telegram ini sudah terhubung ke akun Saku lain. Putuskan koneksinya lebih dulu.")]
+        return [Reply(chat["id"], "Link sudah kedaluwarsa atau pernah dipakai. Buat link baru lewat Settings → Connect Telegram.")]
 
     who = repo.telegram_identity(uid)
     if who is None:
@@ -67,16 +167,39 @@ def handle(repo: Repo, update: dict) -> list[Reply]:
         return [Reply(chat["id"], f"Connected as {who['email']}.")]
     if cmd == "/unlink":
         repo.unlink_telegram(telegram_user_id=uid)
-        return [Reply(chat["id"], "Disconnected. Saku will not read messages from this account any more.")]
+        return [Reply(chat["id"], "Disconnected. Saku tidak akan membaca pesan dari Telegram ini lagi.")]
     if cmd in ("/start", "/help"):
-        return [Reply(chat["id"], f"Hi. You are connected as {who['email']}.\n"
-                                  "/status shows the connection, /unlink disconnects.\n"
-                                  "Recording spending by chat arrives in the next stage.")]
-    return [Reply(chat["id"], "Got it. Recording spending by chat arrives in the next stage; "
-                              "for now use the dashboard to upload statements.")]
+        return [Reply(chat["id"], _connected_help(who["email"]))]
+    if text.startswith("/"):
+        return [Reply(chat["id"], "Command tidak dikenal. Gunakan /help untuk melihat cara memakai Saku.")]
+    if not text:
+        return [Reply(chat["id"], "Belum disimpan. Kirim transaksi dalam bentuk teks, misalnya: makan 45rb dari GoPay.")]
+
+    accounts = repo.accounts(who["tenant_id"])
+    today = _today(repo, who["tenant_id"])
+    pending = repo.telegram_draft_get(uid, who["tenant_id"])
+    if pending:
+        selected = _match_account(accounts, text)
+        if selected:
+            for row in pending["transactions"]:
+                if not row.get("account_hint"):
+                    row["account_hint"] = selected["label"]
+            parsed = validate_extraction({"intent": "record", "transactions": pending["transactions"]})
+            reply = _record(repo, who, uid, parsed, accounts, today, pending["source_ref"])
+            return [Reply(chat["id"], reply)]
+
+    if agent is None:
+        return [Reply(chat["id"], "Saku belum bisa memproses pesan ini sekarang. Tidak ada data yang disimpan. Coba lagi sebentar.")]
+    try:
+        parsed = validate_extraction(agent.extract(text, accounts, today))
+    except (AgentError, OSError, ValueError, TypeError):
+        return [Reply(chat["id"], "Saku gagal memahami pesan ini. Tidak ada data yang disimpan. Coba tulis nominal dan account dengan jelas.")]
+    if parsed["intent"] != "record":
+        return [Reply(chat["id"], "Belum disimpan. Saat ini Saku baru mencatat transaksi. Contoh: makan 45rb dari GoPay.")]
+    source_ref = f"telegram:{uid}:{msg.get('message_id', update.get('update_id', 0))}"
+    return [Reply(chat["id"], _record(repo, who, uid, parsed, accounts, today, source_ref))]
 
 
-# ---- network loop -------------------------------------------------------------------------------------
 class TelegramAPI:
     def __init__(self, token: str):
         if not token or ":" not in token:
@@ -87,34 +210,37 @@ class TelegramAPI:
         data = urllib.parse.urlencode({k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                                        for k, v in params.items()}).encode()
         req = urllib.request.Request(self._base + method, data=data)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = json.load(r)
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            body = json.load(response)
         if not body.get("ok"):
             raise RuntimeError(f"telegram {method} failed: {body.get('description')}")
         return body["result"]
 
 
-def run_polling(conn_factory, token: str | None = None) -> None:
+def run_polling(conn_factory, token: str | None = None, agent=None) -> None:
     api = TelegramAPI(token or os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+    socket_path = os.environ.get("SAKU_AGENT_SOCKET", "")
+    agent = agent or (UnixAgentClient(socket_path) if socket_path else None)
     me = api.call("getMe")
     log.info("bot @%s started (long polling)", me.get("username"))
-    api.call("setMyCommands", commands=[{"command": "status", "description": "Show the connected Saku account"},
-                                        {"command": "unlink", "description": "Disconnect this Telegram account"},
-                                        {"command": "help", "description": "What Saku can do"}])
+    api.call("setMyCommands", commands=[{"command": "start", "description": "Mulai onboarding Saku"},
+                                        {"command": "status", "description": "Lihat akun Saku yang terhubung"},
+                                        {"command": "help", "description": "Cara mencatat transaksi"},
+                                        {"command": "unlink", "description": "Putuskan akun Telegram"}])
     offset = None
     while True:
         try:
             updates = api.call("getUpdates", timeout=40, offset=offset or "", allowed_updates=["message"])
-            for up in updates:
-                offset = up["update_id"] + 1
+            for update in updates:
                 conn = conn_factory()
                 try:
                     repo = Repo(conn)
-                    for r in handle(repo, up):
-                        api.call("sendMessage", chat_id=r.chat_id, text=r.text)
+                    for reply in handle(repo, update, agent=agent):
+                        api.call("sendMessage", chat_id=reply.chat_id, text=reply.text)
                     repo.beat("_system", "telegram_bot")
+                    offset = update["update_id"] + 1  # advance only after every reply was delivered
                 finally:
                     conn.close()
-        except Exception as e:  # noqa: BLE001  keep polling; never log message contents
-            log.warning("poll error: %s", type(e).__name__)
+        except Exception as exc:  # noqa: BLE001  keep polling; never log message contents
+            log.warning("poll error: %s", type(exc).__name__)
             time.sleep(5)

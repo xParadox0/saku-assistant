@@ -1,0 +1,16 @@
+[Unit]
+Description=Saku transaction extraction bridge (Claude Haiku 5.5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/finance-assistant
+ExecStart=/usr/bin/python3 -m saku.agent_bridge --model claude-haiku-5-5 --socket %h/.local/run/saku-agent/agent.sock
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -80,6 +80,37 @@ def test_member_signs_in_with_a_code(world, db_url, tmp_path):
     assert cookie and len(cookie) >= 40
 
 
+def test_root_redirects_a_live_member_session_to_latest_safe_app_page(world, db_url, tmp_path, conn):
+    c, mailer = make(db_url, tmp_path)
+    sign_in(c, mailer, "user@example.com")
+
+    assert c.get("/app/accounts").status_code == 200
+    home = c.get("/", follow_redirects=False)
+
+    assert home.status_code == 303
+    assert home.headers["location"] == "/app/accounts"
+
+
+def test_root_stays_public_without_a_live_session(world, db_url, tmp_path):
+    c, _ = make(db_url, tmp_path)
+    home = c.get("/", follow_redirects=False)
+    assert home.status_code == 200
+    assert "Saku" in home.text
+
+
+def test_root_never_redirects_to_an_unsafe_saved_path(world, db_url, tmp_path, conn):
+    c, mailer = make(db_url, tmp_path)
+    sign_in(c, mailer, "user@example.com")
+    token = c.cookies.get("saku_session")
+    conn.execute("UPDATE web_session SET last_path = %s WHERE sid_sha256 = %s",
+                 ("//evil.example", hashlib.sha256(token.encode()).hexdigest()))
+
+    home = c.get("/", follow_redirects=False)
+
+    assert home.status_code == 303
+    assert home.headers["location"] == "/app"
+
+
 def test_session_cookie_flags(world, db_url, tmp_path):
     c, mailer = make(db_url, tmp_path)
     ask(c, "user@example.com")

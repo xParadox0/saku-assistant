@@ -16,6 +16,14 @@ SECRET = "y" * 40
 ALICE_TG, BOB_TG, STRANGER_TG = 111_000_111, 222_000_222, 999_000_999
 
 
+class FixedAgent:
+    def __init__(self, result):
+        self.result = result
+
+    def extract(self, text, accounts, today):
+        return self.result
+
+
 def upd(uid, text, chat_type="private", is_bot=False):
     return {"update_id": 1, "message": {"message_id": 1, "text": text,
             "from": {"id": uid, "is_bot": is_bot}, "chat": {"id": uid if chat_type == "private" else -100, "type": chat_type}}}
@@ -39,16 +47,29 @@ def test_unlinked_sender_is_refused(two):
 def test_link_then_identity_resolves_to_right_tenant(two):
     code = two.create_link_code("alice@example.com")
     r = bot.handle(two, upd(ALICE_TG, f"/start {code}"))
-    assert "Connected to Saku as alice@example.com" in r[0].text
+    assert "Saku berhasil terhubung sebagai alice@example.com" in r[0].text
     assert two.telegram_identity(ALICE_TG) == {"email": "alice@example.com", "tenant_id": "alice", "role": "user"}
     assert "alice@example.com" in bot.handle(two, upd(ALICE_TG, "/status"))[0].text
+
+
+def test_first_start_explains_onboarding_safety_linking_commands_and_next_step(two):
+    unlinked = bot.handle(two, upd(STRANGER_TG, "/start"))[0].text
+    assert "Saku" in unlinked
+    assert "password bank, PIN, atau OTP" in unlinked
+    assert "Settings" in unlinked and "Connect Telegram" in unlinked
+    assert "/status" in unlinked and "/help" in unlinked and "/unlink" in unlinked
+
+    linked = bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))[0].text
+    assert "berhasil terhubung" in linked.lower()
+    assert "makan 45rb" in linked.lower()
+    assert "account" in linked.lower()
 
 
 def test_code_is_single_use(two):
     code = two.create_link_code("alice@example.com")
     bot.handle(two, upd(ALICE_TG, f"/start {code}"))
     r = bot.handle(two, upd(STRANGER_TG, f"/start {code}"))
-    assert "expired or was already used" in r[0].text
+    assert "kedaluwarsa atau pernah dipakai" in r[0].text
     assert two.telegram_identity(STRANGER_TG) is None
 
 
@@ -80,7 +101,7 @@ def test_telegram_account_cannot_be_taken_over(two):
     bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
     bob_code = two.create_link_code("bob@example.com")
     r = bot.handle(two, upd(ALICE_TG, f"/start {bob_code}"))
-    assert "already connected to another" in r[0].text
+    assert "sudah terhubung ke akun Saku lain" in r[0].text
     assert two.telegram_identity(ALICE_TG)["tenant_id"] == "alice"
     assert two.redeem_link_code(bob_code, BOB_TG)[0] == "linked"  # bob's code was not burned
 
@@ -89,7 +110,7 @@ def test_relink_replaces_old_device(two):
     bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
     new_phone = 333_000_333
     r = bot.handle(two, upd(new_phone, f"/start {two.create_link_code('alice@example.com')}"))
-    assert "previous Telegram account was disconnected" in r[0].text
+    assert "Telegram sebelumnya sudah diputus" in r[0].text
     assert two.telegram_identity(ALICE_TG) is None
     assert two.telegram_identity(new_phone)["email"] == "alice@example.com"
 
@@ -99,6 +120,73 @@ def test_unlink_from_bot(two):
     bot.handle(two, upd(ALICE_TG, "/unlink"))
     assert two.telegram_identity(ALICE_TG) is None
     assert "not connected" in bot.handle(two, upd(ALICE_TG, "/status"))[0].text
+
+
+def test_chat_records_two_expenses_and_confirms_what_was_saved(two, conn):
+    bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
+    before = conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0]
+    agent = FixedAgent({
+        "intent": "record",
+        "transactions": [
+            {"description": "Gorengan", "amount_idr": 5000, "direction": "expense", "date": None,
+             "account_hint": "Alice Main"},
+            {"description": "Air mineral", "amount_idr": 5000, "direction": "expense", "date": None,
+             "account_hint": "Alice Main"},
+        ],
+    })
+
+    reply = bot.handle(two, upd(ALICE_TG, "Beli gorengan 5rb dan air mineral 5rb"), agent=agent)[0].text
+
+    rows = conn.execute("SELECT amount, description FROM txn WHERE tenant_id = 'alice' ORDER BY id DESC LIMIT 2").fetchall()
+    assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before + 2
+    assert rows == [(Decimal("-5000.00"), "AIR MINERAL"), (Decimal("-5000.00"), "GORENGAN")]
+    assert "Berhasil disimpan" in reply
+    assert "2 transaksi" in reply
+    assert "Rp10.000" in reply
+    assert "Alice Main" in reply
+    assert "hari ini" in reply
+
+
+def test_chat_asks_for_account_then_saves_after_the_follow_up(two, conn):
+    two.add_account("alice", "cash", "cash", "Cash")
+    bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
+    before = conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0]
+    agent = FixedAgent({
+        "intent": "record",
+        "transactions": [
+            {"description": "Gorengan", "amount_idr": 5000, "direction": "expense", "date": None,
+             "account_hint": None},
+            {"description": "Air mineral", "amount_idr": 5000, "direction": "expense", "date": None,
+             "account_hint": None},
+        ],
+    })
+
+    missing = bot.handle(two, upd(ALICE_TG, "Beli gorengan 5rb dan air mineral 5rb"), agent=agent)[0].text
+    assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before
+    assert "Belum disimpan" in missing
+    assert "account" in missing.lower()
+    assert "Alice Main" in missing and "Cash" in missing
+
+    saved = bot.handle(two, upd(ALICE_TG, "Alice Main"), agent=agent)[0].text
+    assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before + 2
+    assert "Berhasil disimpan" in saved
+
+
+def test_chat_refuses_incomplete_or_unavailable_agent_without_silent_loss(two, conn):
+    bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
+    before = conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0]
+    incomplete = FixedAgent({
+        "intent": "record",
+        "transactions": [{"description": "Gorengan", "amount_idr": None, "direction": "expense",
+                          "date": None, "account_hint": "Alice Main"}],
+    })
+
+    missing = bot.handle(two, upd(ALICE_TG, "Beli gorengan"), agent=incomplete)[0].text
+    unavailable = bot.handle(two, upd(ALICE_TG, "Beli gorengan 5rb"), agent=None)[0].text
+
+    assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before
+    assert "Belum disimpan" in missing and "nominal" in missing.lower()
+    assert "tidak ada data yang disimpan" in unavailable.lower()
 
 
 def test_group_chats_and_bots_are_ignored(two):
@@ -135,7 +223,7 @@ def test_settings_makes_deep_link_and_bot_redeems_it(web, two):
     h = {"x-test-email": "alice@example.com"}
     page = web.post("/app/settings/telegram/code", data={"csrf": _csrf(web, "alice@example.com")}, headers=h).text
     url = page.split('href="https://t.me/Saku_Test_Bot?start=', 1)[1].split('"', 1)[0]
-    assert bot.handle(two, upd(ALICE_TG, f"/start {url}"))[0].text.startswith("Connected to Saku as alice@example.com")
+    assert bot.handle(two, upd(ALICE_TG, f"/start {url}"))[0].text.startswith("Saku berhasil terhubung sebagai alice@example.com")
     assert "Connected since" in web.get("/app/settings", headers=h).text
 
 
