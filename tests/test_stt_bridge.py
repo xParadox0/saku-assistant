@@ -11,6 +11,18 @@ from saku import stt, stt_bridge
 from saku.stt import TranscribeError, UnixTranscriberClient
 
 
+def _wait_listening(path):
+    """The socket file appears at bind(), slightly before listen(); wait until a connect succeeds."""
+    for _ in range(200):
+        try:
+            with socket.socket(socket.AF_UNIX) as probe:
+                probe.connect(path)
+            return
+        except OSError:
+            time.sleep(0.01)
+    raise AssertionError("bridge did not start")
+
+
 @pytest.fixture
 def bridge(tmp_path):
     seen = []
@@ -26,10 +38,7 @@ def bridge(tmp_path):
     path = str(Path(tmp_path) / "stt.sock")
     t = threading.Thread(target=stt_bridge.serve, args=(path, engine), daemon=True)
     t.start()
-    for _ in range(100):
-        if Path(path).exists():
-            break
-        time.sleep(0.02)
+    _wait_listening(path)
     return path, seen
 
 
@@ -93,10 +102,7 @@ def test_bridge_rejects_when_busy_instead_of_queueing_forever(tmp_path):
     path = str(tmp_path / "busy.sock")
     threading.Thread(target=stt_bridge.serve, args=(path, slow), kwargs={"max_active": 1, "busy_timeout": 0.2},
                      daemon=True).start()
-    for _ in range(100):
-        if Path(path).exists():
-            break
-        time.sleep(0.02)
+    _wait_listening(path)
     first = threading.Thread(target=lambda: UnixTranscriberClient(path).transcribe(b"OggS1"), daemon=True)
     first.start()
     time.sleep(0.2)
@@ -127,10 +133,7 @@ def test_slow_sender_does_not_hold_a_decoder_slot(tmp_path, monkeypatch):
     path = str(Path(tmp_path) / "stt.sock")
     threading.Thread(target=stt_bridge.serve, args=(path, lambda a: ("ok", 1.0)),
                      kwargs={"max_active": 1, "busy_timeout": 0.2}, daemon=True).start()
-    for _ in range(100):
-        if Path(path).exists():
-            break
-        time.sleep(0.02)
+    _wait_listening(path)
     stalled = socket.socket(socket.AF_UNIX)
     stalled.connect(path)
     stalled.sendall(b"SAKU-STT/1 1000\nOggS")      # promises 1000 bytes, sends 4, then stalls

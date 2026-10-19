@@ -251,7 +251,9 @@ def _record_with_new_cash(repo: Repo, who: dict, uid: int, pending: dict, today:
             accounts = repo.accounts(who["tenant_id"])
             cash = _cash_accounts(accounts)[0]
             for row in pending["transactions"]:
-                if _is_cash_hint(row.get("account_hint")):
+                # The user answered the "Balas Cash … menyimpan transaksi ini" offer, so Cash is their choice for
+                # every row that said cash or named no account. Rows that named another account stay untouched.
+                if not row.get("account_hint") or _is_cash_hint(row.get("account_hint")):
                     row["account_hint"] = cash["label"]
             parsed = validate_extraction({"intent": "record", "transactions": pending["transactions"]})
             out = _record(repo, who, uid, parsed, accounts, today, pending["source_ref"])
@@ -365,7 +367,9 @@ def handle(repo: Repo, update: dict, agent=None, transcriber=None, files=None) -
         if selected:
             for row in pending["transactions"]:
                 hint = row.get("account_hint")
-                if not hint or (_is_cash_hint(hint) and selected.get("kind") == "cash"):
+                # A cash-hint row moves only to a cash account, or to the account the user picked after Saku said
+                # they have no cash account and offered "atau pilih account lain".
+                if not hint or (_is_cash_hint(hint) and (selected.get("kind") == "cash" or pending.get("offer_cash"))):
                     row["account_hint"] = selected["label"]
             parsed = validate_extraction({"intent": "record", "transactions": pending["transactions"]})
             return reply(_record(repo, who, uid, parsed, accounts, today, pending["source_ref"]))

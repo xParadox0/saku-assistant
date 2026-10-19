@@ -480,3 +480,21 @@ def test_named_non_cash_account_is_never_overridden_by_cash_default(alice, conn)
 def test_help_mentions_voice_and_cash(alice):
     text = bot.handle(alice, text_upd(ALICE_TG, "/help"))[0].text
     assert "voice" in text.lower() and "cash" in text.lower()
+
+
+def test_cash_offer_reply_cash_saves_unnamed_rows_too(alice, conn):
+    mixed = {"intent": "record", "transactions": [
+        {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": None},
+        {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": "cash"}]}
+    bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb, parkir 5rb cash"), agent=FixedAgent(mixed))
+    reply = bot.handle(alice, text_upd(ALICE_TG, "Cash"), agent=FixedAgent({"intent": "unknown", "transactions": []}))[0].text
+    assert reply.startswith("Account Cash dibuat.")
+    assert _saved_to(conn) == {"KOPI": "Cash", "PARKIR": "Cash"}
+
+
+def test_cash_offer_other_account_choice_is_honoured(alice, conn):
+    bot.handle(alice, text_upd(ALICE_TG, "parkir 5rb cash"), agent=FixedAgent(PARKIR_CASH))
+    reply = bot.handle(alice, text_upd(ALICE_TG, "gopay aja"), agent=FixedAgent({"intent": "unknown", "transactions": []}))[0].text
+    assert "Berhasil disimpan" in reply
+    assert _saved_to(conn) == {"PARKIR MOBIL": "Alice GoPay"}
+    assert alice.c.execute("SELECT count(*) FROM account WHERE tenant_id='alice' AND kind='cash'").fetchone()[0] == 0

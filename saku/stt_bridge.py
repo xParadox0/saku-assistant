@@ -109,12 +109,10 @@ def make_handler(transcribe: Callable[[bytes], tuple[str, float]], slots: thread
             try:
                 audio = read_request(self.rfile, deadline=time.monotonic() + REQUEST_DEADLINE)
             except (BridgeError, OSError) as exc:
-                error = str(exc) if isinstance(exc, BridgeError) else "invalid request"
-                self.wfile.write(json.dumps({"ok": False, "error": error}).encode() + b"\n")
+                self._reply({"ok": False, "error": str(exc) if isinstance(exc, BridgeError) else "invalid request"})
                 return
             if not slots.acquire(timeout=busy_timeout):
-                response = {"ok": False, "error": "busy"}
-                self.wfile.write(json.dumps(response).encode() + b"\n")
+                self._reply({"ok": False, "error": "busy"})
                 return
             try:
                 if not _looks_like_audio(audio):
@@ -127,7 +125,13 @@ def make_handler(transcribe: Callable[[bytes], tuple[str, float]], slots: thread
                 response = {"ok": False, "error": "transcription failed"}
             finally:
                 slots.release()
-            self.wfile.write(json.dumps(response, ensure_ascii=False).encode() + b"\n")
+            self._reply(response)
+
+        def _reply(self, response: dict) -> None:
+            try:
+                self.wfile.write(json.dumps(response, ensure_ascii=False).encode() + b"\n")
+            except OSError:      # client went away; nothing to tell it
+                pass
     return Handler
 
 
