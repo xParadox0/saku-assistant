@@ -78,11 +78,11 @@
       <div class="flows">
         <div class="flow">
           <span class="flow-ic in">{{ icon('i-arrow-in') }}</span>
-          <div><span class="k">Money in</span><b>{{ cf.income|rupiah }}</b></div>
+          <div><span class="k">Money in</span><b>{{ cf.money_in|rupiah }}</b></div>
         </div>
         <div class="flow">
           <span class="flow-ic out">{{ icon('i-arrow-out') }}</span>
-          <div><span class="k">Money out</span><b>{{ cf.spending|rupiah }}</b></div>
+          <div><span class="k">Money out</span><b>{{ cf.money_out|rupiah }}</b></div>
         </div>
       </div>
     </section>
@@ -143,7 +143,7 @@
     </section>
 
     <section class="card accts rise d4">
-      <div class="card-head"><h2>Accounts</h2>{% if not demo %}<a class="link" href="/app/accounts">Manage {{ icon('i-chevron') }}</a>{% endif %}</div>
+      <div class="card-head"><h2>Accounts</h2><span class="hint">Movements include internal transfers{% if not demo %} · <a class="link" href="/app/accounts">Manage {{ icon('i-chevron') }}</a>{% endif %}</span></div>
       <ul class="acct-list">
         {% for a in cf.by_account %}
         <li>

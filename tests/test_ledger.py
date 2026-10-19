@@ -88,3 +88,31 @@ def test_manual_transfer_is_excluded_from_cashflow_and_keeps_both_sides(repo):
     assert cf["spending"] == Decimal("0")
     assert cf["own_transfer_rows_excluded"] == 2
     assert {row["kind"] for row in repo.recent_txns("t1", 10)} == {"own_transfer"}
+
+
+def test_account_movements_include_transfer_while_global_cashflow_excludes_it(repo):
+    repo.ensure_tenant("t1")
+    source = repo.add_account("t1", "bank", "bank_a", "Main bank")
+    target = repo.add_account("t1", "ewallet", "gopay", "GoPay")
+    repo.import_manual_rows("t1", source, [
+        RawTxn(date(2026, 10, 1), Decimal(-700_000), "TRANSFER TO GOPAY", "own_transfer"),
+        RawTxn(date(2026, 10, 1), Decimal(-19_000), "SOURCE PURCHASE"),
+    ], "telegram:test:source")
+    repo.import_manual_rows("t1", target, [
+        RawTxn(date(2026, 10, 1), Decimal(700_000), "TRANSFER FROM MAIN BANK", "own_transfer"),
+        RawTxn(date(2026, 10, 1), Decimal(-9_000), "TARGET PURCHASE"),
+    ], "telegram:test:target")
+    repo.detect_own_transfers("t1")
+
+    cf = repo.cashflow("t1", date(2026, 10, 1), date(2026, 11, 1))
+    by_account = {row["label"]: row for row in cf["by_account"]}
+
+    assert cf["income"] == Decimal("0")
+    assert cf["spending"] == Decimal("28000")
+    assert cf["money_in"] == Decimal("700000")
+    assert cf["money_out"] == Decimal("728000")
+    assert cf["movement_net"] == Decimal("-28000")
+    assert by_account["Main bank"]["money_out"] == Decimal("719000")
+    assert by_account["GoPay"]["money_in"] == Decimal("700000")
+    assert by_account["GoPay"]["money_out"] == Decimal("9000")
+    assert sum(row["money_in"] - row["money_out"] for row in by_account.values()) == cf["net"]
