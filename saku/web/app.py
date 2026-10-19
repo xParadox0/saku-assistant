@@ -302,14 +302,12 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
 
     @app.post("/app/transactions")
     def add_transaction(request: Request, csrf: str = Form(""), account_id: str = Form(""),
-                        booked_on: str = Form(""), amount: str = Form(""), description: str = Form(""),
-                        kind: str = Form("normal")):
+                        booked_on: str = Form(""), amount: str = Form(""), description: str = Form("")):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             check_csrf(ident, csrf)
-            account, day, value, text, txn_kind = transaction_form_values(account_id, booked_on, amount, description, kind)
-            if txn_kind == "own_transfer":
-                raise Forbidden("Add an internal transfer from Telegram so Saku can save both account sides.")
+            account, day, value, text, txn_kind = transaction_form_values(
+                account_id, booked_on, amount, description, "normal")
             try:
                 repo.create_transaction(member["tenant_id"], account, day, value, text, txn_kind,
                                         f"web:{ident.email}:{secrets.token_hex(8)}")

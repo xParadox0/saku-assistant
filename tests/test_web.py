@@ -155,6 +155,28 @@ def test_web_transaction_crud_is_tenant_scoped(client, seeded):
     assert "Updated Coffee" not in client.get("/app/transactions", headers=as_("alice@example.com")).text
 
 
+def test_add_transaction_form_hides_internal_type_and_marks_amount_help(client):
+    page = client.get("/app/transactions", headers=as_("alice@example.com")).text
+    add_form = page.split('id="add-transaction"', 1)[1].split("</form>", 1)[0]
+    assert '<span>Type</span>' not in add_form
+    assert 'name="kind"' not in add_form
+    assert 'class="field amount-field"' in add_form
+    assert 'aria-describedby="amount-help"' in add_form
+
+
+def test_add_transaction_forces_normal_kind_server_side(client, seeded, conn):
+    token = csrf(client, "alice@example.com")
+    response = client.post("/app/transactions", data={
+        "csrf": token, "account_id": seeded["alice_acc"], "booked_on": "2026-10-03",
+        "amount": "-12500", "description": "Forged fee kind", "kind": "fee",
+    }, headers=as_("alice@example.com"), follow_redirects=False)
+    assert response.status_code == 303
+    row = conn.execute(
+        "SELECT kind FROM txn WHERE tenant_id = 'alice' AND description = 'FORGED FEE KIND'"
+    ).fetchone()
+    assert row == ("normal",)
+
+
 def test_web_transaction_cannot_edit_other_tenant(client, seeded, conn):
     token = csrf(client, "alice@example.com")
     bob_txn = conn.execute("SELECT id FROM txn WHERE tenant_id = 'bob' LIMIT 1").fetchone()[0]
