@@ -103,6 +103,7 @@ Tests use `TEST_DATABASE_URL` when set, otherwise a throwaway PostgreSQL started
 | 0c | Dashboard deployed with Saku email-code login; Access remains on Ops | done |
 | 1a | Telegram link, Haiku 5.5 manual entry, explicit follow-up, internal-transfer pairing and Dashboard write | done |
 | 1a.1 | Web transaction add, edit and delete management | done |
+| 1a.2 | Telegram voice notes transcribed locally, and cash entry | done |
 | 1b | Statement import for two providers | planned |
 | 2 | Categorisation, weekly review, heartbeats | planned |
 | 3 | Purchase check, 48-hour wishlist, budgets and goals | planned |
