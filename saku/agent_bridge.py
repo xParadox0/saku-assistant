@@ -64,6 +64,7 @@ Rules:
 - For a transfer between two supplied accounts, return exactly two rows with kind=own_transfer: one expense row for the source account and one income row for the destination account. Use the same amount, put the source and destination in account_hint, and include the word TRANSFER in both descriptions. Never classify a transfer between the user's own accounts as income or spending.
 - If no date is stated, return null. The application will default it to today and disclose that assumption.
 - Match an account only to the supplied labels/providers. If absent or ambiguous, return null.
+- If the user paid or received cash (cash, tunai, uang cash, uang tunai, kontan), set account_hint to "cash" even when no cash account is supplied. Cashback is not cash.
 - Keep descriptions factual and short. Do not include account names in descriptions.
 - If a required value is missing, keep it null so the application can ask a follow-up.
 - For question or unknown, return an empty transactions array.

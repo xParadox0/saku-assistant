@@ -80,6 +80,14 @@ def _is_cash_hint(hint: str | None) -> bool:
     return _key(hint) in CASH_WORDS
 
 
+_CASH_IN_TEXT = re.compile(r"(?<![\w])(cash|tunai|kontan)(?![\w])", re.IGNORECASE)
+
+
+def _says_cash(text: str) -> bool:
+    """True if the message uses a whole cash word ("cash", "tunai", "kontan"). "cashback" does not count."""
+    return bool(_CASH_IN_TEXT.search(text or ""))
+
+
 def _cash_accounts(accounts: list[dict]) -> list[dict]:
     return [a for a in accounts if a.get("kind") == "cash"]
 
@@ -159,11 +167,16 @@ def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict],
                     f"atau kirim ulang transaksinya dengan account yang sudah ada: "
                     + " / ".join(a["label"] for a in accounts) + ".")
         repo.telegram_draft_set(uid, who["tenant_id"], {"transactions": transactions, "source_ref": source_ref,
-                                                         "offer_cash": wants_cash and not has_cash})
+                                                         "offer_cash": not has_cash})
         if wants_cash and not has_cash:
             choices = " / ".join([CASH_LABEL] + [account["label"] for account in accounts])
             return (f"Belum disimpan. Kamu belum punya account cash. Balas {CASH_LABEL} untuk membuat account "
                     f"cash dan menyimpan transaksi ini, atau pilih account lain: {choices}.")
+        if not has_cash:
+            # No cash account yet: still offer Cash, so "parkir 5rb" -> "cash" works for every tenant.
+            choices = " / ".join([CASH_LABEL] + [account["label"] for account in accounts])
+            return (f"Belum disimpan. Account yang dipakai belum jelas. Balas salah satu: {choices}. "
+                    f"Kalau kamu balas {CASH_LABEL}, Saku membuat account cash baru untuk transaksi ini.")
         ordered = _cash_accounts(accounts) + [a for a in accounts if a.get("kind") != "cash"]
         choices = " / ".join(account["label"] for account in ordered)
         return f"Belum disimpan. Account yang dipakai belum jelas. Balas salah satu nama account ini: {choices}."
@@ -396,6 +409,11 @@ def handle(repo: Repo, update: dict, agent=None, transcriber=None, files=None) -
                      "Coba tulis nominal dan account dengan jelas.")
     if parsed["intent"] != "record":
         return reply("Belum disimpan. Saat ini Saku baru mencatat transaksi. Contoh: makan 45rb dari GoPay.")
+    rows = parsed["transactions"]
+    if len(rows) == 1 and not rows[0].get("account_hint") and rows[0].get("kind") != "own_transfer" \
+            and _says_cash(text):
+        # The agent may drop "cash" when the tenant has no cash account; the user's words still say cash.
+        rows[0]["account_hint"] = "cash"
     source_ref = f"telegram:{uid}:{msg.get('message_id', update.get('update_id', 0))}"
     return reply(_record(repo, who, uid, parsed, accounts, today, source_ref))
 
