@@ -14,8 +14,8 @@ WorkingDirectory=%h/projects/finance-assistant
 ExecStart=%h/projects/finance-assistant/deploy/saku-stt-sandbox.sh
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
+# No NoNewPrivileges/PrivateTmp here: on Ubuntu, bwrap may create user namespaces only through its AppArmor
+# profile, and NoNewPrivileges blocks that profile transition. bwrap itself sets no_new_privs for the bridge.
 # Measured: ~740-830 MB RSS with the small model loaded. The model unloads after 15 minutes idle.
 MemoryMax=1200M
 TasksMax=64

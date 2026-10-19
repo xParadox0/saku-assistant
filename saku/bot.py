@@ -94,6 +94,8 @@ def _match_account(accounts: list[dict], hint: str | None) -> dict | None:
     exact = [a for a in accounts if wanted in {_key(a["label"]), _key(a["provider"])}]
     if len(exact) == 1:
         return exact[0]
+    if len(wanted) < 4:   # "se", "pay", "ba" are fragments, not account names
+        return None
     partial = [a for a in accounts if wanted and (wanted in _key(a["label"]) or wanted in _key(a["provider"]))]
     return partial[0] if len(partial) == 1 else None
 
@@ -146,6 +148,15 @@ def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict],
         wants_cash = any(account is None and _is_cash_hint(row.get("account_hint"))
                          for row, account in zip(transactions, resolved))
         has_cash = bool(_cash_accounts(accounts))
+        unknown = [row["account_hint"] for row, account in zip(transactions, resolved)
+                   if account is None and row.get("account_hint") and not _is_cash_hint(row["account_hint"])]
+        if unknown:
+            # The user named an account Saku does not have. Never move that row elsewhere; ask for a resend.
+            repo.telegram_draft_clear(uid, who["tenant_id"])
+            names = ", ".join(dict.fromkeys(unknown))
+            return (f"Belum disimpan. Account {names} belum ada di Saku. Tambahkan dulu lewat Dashboard → Accounts, "
+                    f"atau kirim ulang transaksinya dengan account yang sudah ada: "
+                    + " / ".join(a["label"] for a in accounts) + ".")
         repo.telegram_draft_set(uid, who["tenant_id"], {"transactions": transactions, "source_ref": source_ref,
                                                          "offer_cash": wants_cash and not has_cash})
         if wants_cash and not has_cash:
@@ -240,7 +251,7 @@ def _record_with_new_cash(repo: Repo, who: dict, uid: int, pending: dict, today:
             accounts = repo.accounts(who["tenant_id"])
             cash = _cash_accounts(accounts)[0]
             for row in pending["transactions"]:
-                if not row.get("account_hint") or _match_account(accounts, row["account_hint"]) is None:
+                if _is_cash_hint(row.get("account_hint")):
                     row["account_hint"] = cash["label"]
             parsed = validate_extraction({"intent": "record", "transactions": pending["transactions"]})
             out = _record(repo, who, uid, parsed, accounts, today, pending["source_ref"])
@@ -353,7 +364,8 @@ def handle(repo: Repo, update: dict, agent=None, transcriber=None, files=None) -
             return reply(_record_with_new_cash(repo, who, uid, pending, today))
         if selected:
             for row in pending["transactions"]:
-                if not row.get("account_hint") or _match_account(accounts, row["account_hint"]) is None:
+                hint = row.get("account_hint")
+                if not hint or (_is_cash_hint(hint) and selected.get("kind") == "cash"):
                     row["account_hint"] = selected["label"]
             parsed = validate_extraction({"intent": "record", "transactions": pending["transactions"]})
             return reply(_record(repo, who, uid, parsed, accounts, today, pending["source_ref"]))

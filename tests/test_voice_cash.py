@@ -277,6 +277,61 @@ def test_cash_account_is_not_left_behind_when_the_save_is_refused(alice, conn):
     assert alice.c.execute("SELECT count(*) FROM account WHERE tenant_id='alice' AND kind='cash'").fetchone()[0] == 0
 
 
+KOPI_BNI_PARKIR = {"intent": "record", "transactions": [
+    {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": "BNI"},
+    {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": None}]}
+
+
+def _saved_to(conn):
+    return dict(conn.execute("SELECT t.description, a.label FROM txn t JOIN account a ON a.id=t.account_id "
+                             "WHERE t.tenant_id='alice' AND t.amount < 0").fetchall())
+
+
+def test_reply_never_moves_a_row_whose_account_was_named(alice, conn):
+    """User said BNI for kopi (no such account). Saku says so at once and keeps no draft a reply could redirect."""
+    first = bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb pakai BNI, parkir 5rb"),
+                       agent=FixedAgent(KOPI_BNI_PARKIR))[0].text
+    assert "Belum disimpan" in first and "BNI" in first
+    bot.handle(alice, text_upd(ALICE_TG, "gopay"), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {}
+
+
+def test_new_cash_account_takes_only_the_rows_that_said_cash(alice, conn):
+    mixed = {"intent": "record", "transactions": [
+        {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": "BNI"},
+        {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": "cash"}]}
+    first = bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb BNI, parkir 5rb cash"), agent=FixedAgent(mixed))[0].text
+    assert "BNI" in first
+    bot.handle(alice, text_upd(ALICE_TG, "Cash"), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {}
+    assert alice.c.execute("SELECT count(*) FROM account WHERE tenant_id='alice' AND kind='cash'").fetchone()[0] == 0
+
+
+def test_cash_reply_creates_cash_only_for_rows_that_said_cash(alice, conn):
+    mixed = {"intent": "record", "transactions": [
+        {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": "gopay"},
+        {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": "cash"}]}
+    bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb gopay, parkir 5rb cash"), agent=FixedAgent(mixed))
+    bot.handle(alice, text_upd(ALICE_TG, "Cash"), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {"KOPI": "Alice GoPay", "PARKIR": "Cash"}
+
+
+def test_answer_fills_rows_without_an_account(alice, conn):
+    two = {"intent": "record", "transactions": [
+        {"description": "Kopi", "amount_idr": 20000, "direction": "expense", "date": None, "account_hint": None},
+        {"description": "Parkir", "amount_idr": 5000, "direction": "expense", "date": None, "account_hint": None}]}
+    bot.handle(alice, text_upd(ALICE_TG, "kopi 20rb, parkir 5rb"), agent=FixedAgent(two))
+    bot.handle(alice, text_upd(ALICE_TG, "gopay"), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {"KOPI": "Alice GoPay", "PARKIR": "Alice GoPay"}
+
+
+@pytest.mark.parametrize("fragment", ["se", "pay", "an", "ba"])
+def test_tiny_fragments_do_not_pick_an_account(alice, conn, fragment):
+    bot.handle(alice, text_upd(ALICE_TG, "bayar parkir mobil 5 ribu"), agent=FixedAgent(PARKIR))
+    bot.handle(alice, text_upd(ALICE_TG, fragment), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {}
+
+
 def test_only_voice_notes_and_known_audio_types_are_downloaded(alice):
     files, stt = FakeFiles(), FakeTranscriber()
     for kind, mime in (("audio", "video/mp4"), ("audio", "application/octet-stream"), ("audio", None)):
@@ -360,6 +415,38 @@ def test_typing_indicator_is_not_sent_to_unlinked_or_group_chats(repo):
 
     bot.poll_once(lambda: NoClose(repo.c), API(), None, agent=None, transcriber=FakeTranscriber())
     assert "sendChatAction" not in sent and "sendMessage" in sent
+
+    sent.clear()
+    group = voice_upd(999_000_999)
+    group["message"]["chat"] = {"id": -100, "type": "group"}
+    API.call = lambda self, method, **params: (sent.append(method), [group] if method == "getUpdates" else {})[1]
+    bot.poll_once(lambda: NoClose(repo.c), API(), None, agent=None, transcriber=FakeTranscriber())
+    assert "sendChatAction" not in sent
+
+
+def test_typing_indicator_is_sent_to_a_linked_private_chat(alice):
+    sent = []
+
+    class API:
+        def call(self, method, **params):
+            sent.append(method)
+            return [voice_upd(ALICE_TG)] if method == "getUpdates" else {}
+
+        def download(self, file_id, max_bytes):
+            return b"OggS fake opus"
+
+    class NoClose:
+        def __init__(self, c):
+            self.c = c
+
+        def __getattr__(self, name):
+            return getattr(self.c, name)
+
+        def close(self):
+            pass
+
+    bot.poll_once(lambda: NoClose(alice.c), API(), None, agent=None, transcriber=FakeTranscriber())
+    assert "sendChatAction" in sent
 
 
 def test_unlabelled_income_is_not_assumed_to_be_cash(alice, conn):

@@ -26,6 +26,7 @@ MAX_SECONDS = 60
 HEADER = b"SAKU-STT/1 "
 IDLE_UNLOAD_SECONDS = 15 * 60
 READ_TIMEOUT = 15
+REQUEST_DEADLINE = 30   # whole request, so a slow-drip sender cannot keep a connection open forever
 # Vocabulary hint: makes "5 ribu", "cash", "tunai" and provider names come out the way users write them.
 PROMPT = ("Catatan transaksi keuangan dalam bahasa Indonesia: ribu, juta, rupiah, cash, tunai, "
           "GoPay, OVO, DANA, ShopeePay, BCA, BRI, BNI, Mandiri, Jago, SeaBank.")
@@ -73,7 +74,7 @@ class WhisperEngine:
             return text, info.duration
 
 
-def read_request(rfile) -> bytes:
+def read_request(rfile, deadline: float | None = None) -> bytes:
     header = rfile.readline(64)
     if not header.startswith(HEADER) or not header.endswith(b"\n"):
         raise BridgeError("invalid request")
@@ -83,7 +84,16 @@ def read_request(rfile) -> bytes:
         raise BridgeError("invalid request") from None
     if not 0 < size <= MAX_AUDIO_BYTES:
         raise BridgeError("audio is empty or too large")
-    data = rfile.read(size)
+    chunks, got = [], 0
+    while got < size:
+        if deadline is not None and time.monotonic() > deadline:
+            raise BridgeError("request too slow")
+        chunk = rfile.read1(min(65536, size - got)) if hasattr(rfile, "read1") else rfile.read(size - got)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        got += len(chunk)
+    data = b"".join(chunks)
     if len(data) != size:
         raise BridgeError("incomplete audio")
     return data
@@ -95,12 +105,18 @@ def make_handler(transcribe: Callable[[bytes], tuple[str, float]], slots: thread
         timeout = READ_TIMEOUT
 
         def handle(self) -> None:
+            # Read the whole request before taking a slot, so a slow sender cannot hold one of the decoder slots.
+            try:
+                audio = read_request(self.rfile, deadline=time.monotonic() + REQUEST_DEADLINE)
+            except (BridgeError, OSError) as exc:
+                error = str(exc) if isinstance(exc, BridgeError) else "invalid request"
+                self.wfile.write(json.dumps({"ok": False, "error": error}).encode() + b"\n")
+                return
             if not slots.acquire(timeout=busy_timeout):
                 response = {"ok": False, "error": "busy"}
                 self.wfile.write(json.dumps(response).encode() + b"\n")
                 return
             try:
-                audio = read_request(self.rfile)
                 if not _looks_like_audio(audio):
                     raise BridgeError("unsupported audio format")
                 text, _ = transcribe(audio)
@@ -115,11 +131,15 @@ def make_handler(transcribe: Callable[[bytes], tuple[str, float]], slots: thread
     return Handler
 
 
+_MP4_AUDIO_BRANDS = {b"M4A ", b"M4B ", b"mp41", b"mp42", b"isom", b"iso2", b"dash", b"3gp4", b"3gp5"}
+
+
 def _looks_like_audio(data: bytes) -> bool:
     """Accept only container signatures Telegram voice/audio uses, so the decoder never sees arbitrary formats."""
     head = data[:12]
     return (head.startswith(b"OggS") or head.startswith(b"ID3") or head[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")
-            or head.startswith(b"RIFF") and data[8:12] == b"WAVE" or head[4:8] == b"ftyp"
+            or head.startswith(b"RIFF") and data[8:12] == b"WAVE"
+            or head[4:8] == b"ftyp" and data[8:12] in _MP4_AUDIO_BRANDS
             or head.startswith(b"\x1aE\xdf\xa3") or head[:2] in (b"\xff\xf1", b"\xff\xf9"))
 
 

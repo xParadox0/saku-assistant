@@ -118,3 +118,28 @@ def test_non_audio_bytes_never_reach_the_decoder(bridge):
         with pytest.raises(TranscribeError):
             UnixTranscriberClient(path).transcribe(junk)
     assert seen == []
+
+
+def test_slow_sender_does_not_hold_a_decoder_slot(tmp_path, monkeypatch):
+    """A client that stalls mid-upload must not block real voice notes behind it."""
+    monkeypatch.setattr(stt_bridge, "REQUEST_DEADLINE", 1.0)
+    monkeypatch.setattr(stt_bridge, "READ_TIMEOUT", 0.5)
+    path = str(Path(tmp_path) / "stt.sock")
+    threading.Thread(target=stt_bridge.serve, args=(path, lambda a: ("ok", 1.0)),
+                     kwargs={"max_active": 1, "busy_timeout": 0.2}, daemon=True).start()
+    for _ in range(100):
+        if Path(path).exists():
+            break
+        time.sleep(0.02)
+    stalled = socket.socket(socket.AF_UNIX)
+    stalled.connect(path)
+    stalled.sendall(b"SAKU-STT/1 1000\nOggS")      # promises 1000 bytes, sends 4, then stalls
+    time.sleep(0.1)
+    assert UnixTranscriberClient(path).transcribe(b"OggS real voice") == "ok"
+    stalled.close()
+
+
+def test_non_audio_mp4_brands_are_refused():
+    assert not stt_bridge._looks_like_audio(b"\x00\x00\x00\x1cftypavif" + b"\x00" * 20)
+    assert not stt_bridge._looks_like_audio(b"\x00\x00\x00\x1cftypheic" + b"\x00" * 20)
+    assert stt_bridge._looks_like_audio(b"\x00\x00\x00\x1cftypM4A " + b"\x00" * 20)
