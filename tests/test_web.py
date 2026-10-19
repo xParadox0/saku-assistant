@@ -177,6 +177,35 @@ def test_add_transaction_forces_normal_kind_server_side(client, seeded, conn):
     assert row == ("normal",)
 
 
+def test_transaction_list_is_compact_table_with_disclosed_editor(client, conn):
+    lunch_id = conn.execute(
+        "SELECT id FROM txn WHERE tenant_id = 'alice' AND description = 'ALICE LUNCH'"
+    ).fetchone()[0]
+    conn.execute("UPDATE txn SET kind = 'own_transfer' WHERE id = %s", (lunch_id,))
+    page = client.get("/app/transactions", headers=as_("alice@example.com")).text
+    assert 'class="transaction-table-head"' in page
+    assert all(f">{heading}<" in page for heading in ("Date", "Account", "Description", "Type", "Amount"))
+    assert '<details class="transaction-row"' in page
+    assert '<summary class="transaction-summary"' in page
+    assert 'class="transaction-editor"' in page
+    assert 'class="transaction-edit-label"' in page
+    first_row = page.split('<details class="transaction-row"', 1)[1].split("</details>", 1)[0]
+    details_open_tag = first_row.split(">", 1)[0]
+    assert f'data-txn-id="{lunch_id}"' in details_open_tag
+    assert " open" not in details_open_tag
+    summary_open_tag = first_row.split("<summary", 1)[1].split(">", 1)[0]
+    assert "aria-label" not in summary_open_tag
+    assert '<time class="transaction-date" datetime="2026-09-03">3 Sep 2026</time>' in first_row
+    assert first_row.count('name="csrf"') == 2
+    assert f'action="/app/transactions/{lunch_id}/delete"' in first_row
+    assert '<option value="own_transfer" selected>' in first_row
+    assert '<span>Account</span>' in first_row
+    assert '<span>Date</span>' in first_row
+    assert '<span>Amount</span>' in first_row
+    assert '<span>Description</span>' in first_row
+    assert '<span>Type</span>' in first_row
+
+
 def test_web_transaction_cannot_edit_other_tenant(client, seeded, conn):
     token = csrf(client, "alice@example.com")
     bob_txn = conn.execute("SELECT id FROM txn WHERE tenant_id = 'bob' LIMIT 1").fetchone()[0]

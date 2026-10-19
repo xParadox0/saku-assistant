@@ -343,10 +343,34 @@ button.danger:hover { background: var(--neg-soft); }
 .transaction-form .wide { grid-column: span 2; }
 .transaction-form > button { align-self: end; }
 .transaction-form input, .transaction-form select { height: 44px; min-height: 44px; }
-.transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
-.transaction-edit { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, .8fr) minmax(120px, .8fr) minmax(150px, 1.4fr) minmax(120px, .8fr) auto; gap: 8px; align-items: end; }
-.transaction-row .field { gap: 0; }
-.transaction-row .field input, .transaction-row .field select { min-height: 40px; padding: 8px 10px; }
+.transaction-list { border-top: 1px solid var(--line); } /* taste-skill-ignore: table header boundary */
+.transaction-table-head, .transaction-summary {
+  display: grid;
+  grid-template-columns: minmax(104px, .75fr) minmax(120px, 1fr) minmax(180px, 1.6fr) minmax(92px, .7fr) minmax(118px, .8fr) 68px;
+  gap: 12px;
+  align-items: center;
+}
+.transaction-table-head { padding: 0 12px 10px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.transaction-table-head .num { text-align: right; }
+.transaction-row { border-bottom: 1px solid var(--line); } /* taste-skill-ignore: transaction table row separator */
+.transaction-row:last-child { border-bottom: 0; }
+.transaction-summary { padding: 14px 12px; cursor: pointer; list-style: none; border-radius: var(--r-sm); }
+.transaction-summary::-webkit-details-marker { display: none; }
+.transaction-summary:hover { background: var(--surface-2); }
+.transaction-summary:focus-visible { outline: 3px solid var(--mint); outline-offset: -3px; }
+.transaction-date, .transaction-account { color: var(--muted); font-size: 13px; }
+.transaction-account, .transaction-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transaction-description { color: var(--ink); font-weight: 700; }
+.transaction-kind { justify-self: start; padding: 5px 8px; border-radius: 999px; background: var(--surface-3); color: var(--muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.transaction-kind.k-own_transfer { background: var(--warn-soft); color: var(--ink); }
+.transaction-amount { text-align: right; white-space: nowrap; }
+.transaction-edit-label { display: inline-flex; justify-content: flex-end; align-items: center; gap: 3px; color: var(--accent); font-size: 13px; font-weight: 800; white-space: nowrap; }
+.transaction-edit-label .ic { width: 14px; height: 14px; transition: transform .18s ease; }
+.transaction-row[open] .transaction-edit-label .ic { transform: rotate(90deg); }
+.transaction-editor { padding: 16px 12px 18px; background: var(--surface-2); border-top: 1px solid var(--line); } /* taste-skill-ignore: editor boundary inside table row */
+.transaction-edit { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, .8fr) minmax(120px, .8fr) minmax(150px, 1.4fr) minmax(120px, .8fr) auto; gap: 10px; align-items: end; }
+.transaction-row .field input, .transaction-row .field select { min-height: 40px; padding: 8px 10px; min-width: 0; }
+.transaction-delete { display: flex; justify-content: flex-end; margin-top: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
@@ -365,10 +389,30 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
 }
 
 /* ---- responsive ---------------------------------------------------------------------------------- */
+@media (max-width: 1280px) {
+  /* six-column editor needs ~830px; below this viewport the panel is narrower, so use two columns */
+  .transaction-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transaction-edit button { grid-column: 1 / -1; }
+}
 @media (max-width: 1180px) {
   .hero, .where, .trend, .accts, .recent, .repeat, .empty-analysis, .empty-accounts { grid-column: span 12; }
   .where-body { grid-template-columns: 180px minmax(0, 1fr); }
   .donut { width: 180px; height: 180px; }
+  /* transaction table needs ~1160px of fixed column minimums; switch to compact rows before it overflows */
+  .transaction-table-head { display: none; }
+  .transaction-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "description amount" "account kind" "date edit";
+    gap: 3px 12px;
+    padding: 14px 10px;
+  }
+  .transaction-description { grid-area: description; }
+  .transaction-amount { grid-area: amount; align-self: start; }
+  .transaction-account { grid-area: account; }
+  .transaction-kind { grid-area: kind; justify-self: end; padding: 3px 7px; }
+  .transaction-date { grid-area: date; }
+  .transaction-edit-label { grid-area: edit; justify-self: end; }
+  .transaction-editor { padding: 14px 10px 16px; }
 }
 @media (max-width: 980px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
@@ -389,9 +433,6 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
   .transaction-form { grid-template-columns: minmax(0, 1fr); }
   .transaction-form .wide { grid-column: auto; }
   .transaction-form button { width: 100%; }
-  .transaction-row { grid-template-columns: minmax(0, 1fr); }
-  .transaction-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .transaction-edit button { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
   h1 { font-size: 28px; }

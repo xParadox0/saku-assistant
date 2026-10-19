@@ -23,21 +23,34 @@
   <div class="card-head"><h2>All transactions</h2><span class="hint">{{ transactions|length }} shown</span></div>
   {% if transactions %}
   <div class="transaction-list">
+    <div class="transaction-table-head" aria-hidden="true">
+      <span>Date</span><span>Account</span><span>Description</span><span>Type</span><span class="num">Amount</span><span>Action</span>
+    </div>
   {% for t in transactions %}
-    <article class="transaction-row" data-txn-id="{{ t.id }}">
-      <form method="post" action="/app/transactions/{{ t.id }}" class="transaction-edit">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label class="field"><span class="sr-only">Account</span><select name="account_id" required>{% for a in accounts %}<option value="{{ a.id }}" {% if a.id == t.account_id %}selected{% endif %}>{{ a.label }}</option>{% endfor %}</select></label>
-        <label class="field"><span class="sr-only">Date</span><input type="date" name="booked_on" value="{{ t.booked_on }}" required></label>
-        <label class="field"><span class="sr-only">Amount</span><input type="number" name="amount" step="0.01" value="{{ t.amount }}" required></label>
-        <label class="field"><span class="sr-only">Description</span><input name="description" maxlength="200" value="{{ t.description|title }}" required></label>
-        <label class="field"><span class="sr-only">Type</span><select name="kind">{% for k in kinds %}<option value="{{ k }}" {% if k == t.kind %}selected{% endif %}>{{ k|replace('_', ' ')|title }}</option>{% endfor %}{% if t.kind == 'own_transfer' %}<option value="own_transfer" selected>Own transfer</option>{% endif %}</select></label>
-        <button type="submit" class="quiet">Save</button>
-      </form>
-      <form method="post" action="/app/transactions/{{ t.id }}/delete">
-        <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Delete</button>
-      </form>
-    </article>
+    <details class="transaction-row" data-txn-id="{{ t.id }}">
+      <summary class="transaction-summary">
+        <time class="transaction-date" datetime="{{ t.booked_on }}">{{ t.booked_on.day }} {{ t.booked_on.strftime('%b %Y') }}</time>
+        <span class="transaction-account">{{ t.account }}</span>
+        <span class="transaction-description">{{ t.description|title }}</span>
+        <span class="transaction-kind k-{{ t.kind }}">{{ t.kind|replace('_', ' ')|title }}</span>
+        <strong class="transaction-amount {{ 'income' if t.amount > 0 else 'neg' }}">{{ t.amount|signed_rupiah }}</strong>
+        <span class="transaction-edit-label">Edit {{ icon('i-chevron') }}</span>
+      </summary>
+      <div class="transaction-editor">
+        <form method="post" action="/app/transactions/{{ t.id }}" class="transaction-edit">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="field"><span>Account</span><select name="account_id" required>{% for a in accounts %}<option value="{{ a.id }}" {% if a.id == t.account_id %}selected{% endif %}>{{ a.label }}</option>{% endfor %}</select></label>
+          <label class="field"><span>Date</span><input type="date" name="booked_on" value="{{ t.booked_on }}" required></label>
+          <label class="field"><span>Amount</span><input type="number" name="amount" step="0.01" value="{{ t.amount }}" required></label>
+          <label class="field"><span>Description</span><input name="description" maxlength="200" value="{{ t.description|title }}" required></label>
+          <label class="field"><span>Type</span><select name="kind">{% for k in kinds %}<option value="{{ k }}" {% if k == t.kind %}selected{% endif %}>{{ k|replace('_', ' ')|title }}</option>{% endfor %}{% if t.kind == 'own_transfer' %}<option value="own_transfer" selected>Own transfer</option>{% endif %}</select></label>
+          <button type="submit">Save changes</button>
+        </form>
+        <form method="post" action="/app/transactions/{{ t.id }}/delete" class="transaction-delete">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Delete transaction</button>
+        </form>
+      </div>
+    </details>
   {% endfor %}
   </div>
   {% else %}<p class="lede">No transactions yet. Add the first one above or import a statement.</p>{% endif %}
