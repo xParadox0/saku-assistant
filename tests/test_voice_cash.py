@@ -498,3 +498,68 @@ def test_cash_offer_other_account_choice_is_honoured(alice, conn):
     assert "Berhasil disimpan" in reply
     assert _saved_to(conn) == {"PARKIR MOBIL": "Alice GoPay"}
     assert alice.c.execute("SELECT count(*) FROM account WHERE tenant_id='alice' AND kind='cash'").fetchone()[0] == 0
+
+
+# ---- transient network failures ---------------------------------------------------------------------
+class _Resp:
+    def __init__(self, body):
+        import io
+        self._b = io.BytesIO(body)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def read(self, *a):
+        return self._b.read(*a)
+
+
+def test_download_retries_a_transient_network_error(monkeypatch):
+    import urllib.error
+    attempts = {"getFile": 0, "file": 0}
+
+    def flaky(request, timeout):
+        key = "getFile" if "/getFile" in request.full_url else "file"
+        attempts[key] += 1
+        if attempts[key] == 1:
+            raise urllib.error.URLError(ConnectionResetError("reset"))
+        if key == "getFile":
+            return _Resp(b'{"ok": true, "result": {"file_path": "voice/file_9.oga", "file_size": 4}}')
+        return _Resp(b"OggS")
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    assert bot.TelegramAPI("123:SYNTHETIC").download("F1", 100) == b"OggS"
+    assert attempts == {"getFile": 2, "file": 2}
+
+
+def test_download_does_not_retry_http_errors(monkeypatch):
+    import urllib.error
+    calls = []
+
+    def gone(request, timeout):
+        calls.append(1)
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", gone)
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    with pytest.raises(urllib.error.HTTPError):
+        bot.TelegramAPI("123:SYNTHETIC").download("F1", 100)
+    assert len(calls) == 1
+
+
+def test_voice_failure_log_names_the_step_but_no_secret(alice, caplog):
+    import urllib.error
+
+    class DownFiles:
+        def download(self, file_id, max_bytes):
+            raise urllib.error.URLError(TimeoutError("https://api.telegram.org/file/bot123:SYNTHETIC/x"))
+
+    with caplog.at_level("WARNING"):
+        reply = bot.handle(alice, voice_upd(ALICE_TG), agent=FixedAgent(PARKIR_CASH),
+                           transcriber=FakeTranscriber(), files=DownFiles())[0].text
+    assert "Belum disimpan" in reply
+    assert "voice download failed: URLError (TimeoutError)" in caplog.text
+    assert "SYNTHETIC" not in caplog.text and "parkir" not in caplog.text.lower()

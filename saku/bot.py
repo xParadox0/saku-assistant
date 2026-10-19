@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -278,6 +279,14 @@ def _voice_media(msg: dict) -> dict | None:
     return media if ok else {"unsupported": True}
 
 
+def _error_kind(exc: BaseException) -> str:
+    """Exception type plus the underlying cause type, never the message (it can hold the token or a URL)."""
+    cause = getattr(exc, "reason", None) or exc.__cause__
+    if isinstance(cause, BaseException):
+        return f"{type(exc).__name__} ({type(cause).__name__})"
+    return type(exc).__name__
+
+
 def _transcribe_voice(media: dict, transcriber, files) -> tuple[str | None, str | None]:
     """Return (transcript, None) or (None, reply). Size and length are checked before anything is downloaded."""
     if media.get("unsupported"):
@@ -292,9 +301,13 @@ def _transcribe_voice(media: dict, transcriber, files) -> tuple[str | None, str 
                       "Kirim satu atau beberapa transaksi singkat per voice note.")
     try:
         audio = files.download(media["file_id"], MAX_VOICE_BYTES)
+    except Exception as exc:  # noqa: BLE001  log only types: URLs carry the bot token
+        log.warning("voice download failed: %s", _error_kind(exc))
+        return None, VOICE_UNAVAILABLE
+    try:
         transcript = (transcriber.transcribe(audio) or "").strip()
     except Exception as exc:  # noqa: BLE001  never log audio or transcript
-        log.warning("voice transcription failed: %s", type(exc).__name__)
+        log.warning("voice transcription failed: %s", _error_kind(exc))
         return None, VOICE_UNAVAILABLE
     if not transcript:
         return None, ("Belum disimpan. Saya tidak menangkap kata apa pun di voice note ini. "
@@ -393,6 +406,21 @@ class TelegramAPI:
             raise SystemExit("TELEGRAM_BOT_TOKEN is not set")
         self._base = f"https://api.telegram.org/bot{token}/"
 
+    def _open(self, request: urllib.request.Request, timeout: int):
+        """urlopen with two quick retries for network-level failures (reset, DNS blip, timeout).
+
+        HTTP errors (4xx/5xx) are answers from Telegram and are not retried.
+        """
+        for attempt in range(3):
+            try:
+                return urllib.request.urlopen(request, timeout=timeout)
+            except urllib.error.HTTPError:
+                raise
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                if attempt == 2:
+                    raise
+                time.sleep(1 + attempt)
+
     def call(self, method: str, request_timeout: int = 20, **params) -> dict:
         data = urllib.parse.urlencode({k: (json.dumps(v) if isinstance(v, (list, dict)) else v)
                                        for k, v in params.items()}).encode()
@@ -405,13 +433,19 @@ class TelegramAPI:
 
     def download(self, file_id: str, max_bytes: int) -> bytes:
         """Fetch a file the user sent, refusing anything larger than max_bytes. Nothing is written to disk."""
-        info = self.call("getFile", file_id=file_id)
+        req = urllib.request.Request(self._base + "getFile",
+                                     data=urllib.parse.urlencode({"file_id": file_id}).encode())
+        with self._open(req, 20) as response:
+            body = json.load(response)
+        if not body.get("ok"):
+            raise RuntimeError("telegram getFile failed")
+        info = body["result"]
         path = info.get("file_path") or ""
         if (info.get("file_size") or 0) > max_bytes or not _SAFE_FILE_PATH.fullmatch(path) \
                 or ".." in path.split("/"):
             raise ValueError("file too large or unavailable")
         url = self._base.replace("/bot", "/file/bot", 1) + path
-        with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as response:
+        with self._open(urllib.request.Request(url), 30) as response:
             data = response.read(max_bytes + 1)
         if len(data) > max_bytes:
             raise ValueError("file too large")
@@ -466,5 +500,5 @@ def run_polling(conn_factory, token: str | None = None, agent=None, transcriber=
         try:
             offset = poll_once(conn_factory, api, offset, agent=agent, transcriber=transcriber)
         except Exception as exc:  # noqa: BLE001  keep polling; never log message contents
-            log.warning("poll error: %s", type(exc).__name__)
+            log.warning("poll error: %s", _error_kind(exc))
             time.sleep(5)
