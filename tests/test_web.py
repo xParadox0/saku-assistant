@@ -71,6 +71,29 @@ def test_overview_shows_only_own_data(client):
     assert "bob" not in low and "777" not in page
 
 
+def test_overview_explains_that_account_movements_include_transfers(client):
+    page = client.get("/app", headers=as_("alice@example.com")).text
+    assert "Movements include internal transfers" in page
+
+
+def test_overview_money_in_and_out_include_internal_transfers(client, seeded):
+    with psycopg.connect(seeded["url"], autocommit=True) as conn:
+        repo = Repo(conn)
+        target = repo.add_account("alice", "ewallet", "gopay", "Alice GoPay")
+        repo.import_manual_rows("alice", seeded["alice_acc"], [
+            RawTxn(date(2026, 9, 4), Decimal(-700_000), "TRANSFER TO GOPAY", "own_transfer"),
+        ], "telegram:test:source")
+        repo.import_manual_rows("alice", target, [
+            RawTxn(date(2026, 9, 4), Decimal(700_000), "TRANSFER FROM MAIN BANK", "own_transfer"),
+        ], "telegram:test:target")
+        repo.detect_own_transfers("alice")
+
+    page = client.get("/app", headers=as_("alice@example.com")).text
+    assert '<span class="k">Money in</span><b>Rp5.700.000</b>' in page
+    assert '<span class="k">Money out</span><b>Rp780.000</b>' in page
+    assert "September 2026: in Rp5.700.000, out Rp780.000" in page
+
+
 def test_unknown_email_gets_registration_not_data(client):
     """Since the closed beta, a verified non-member is sent to /app/register (closed by default) and sees no data."""
     r = client.get("/app", headers=as_("stranger@example.com"), follow_redirects=False)

@@ -100,19 +100,19 @@ class Beta:
 
 def _chart(series: list[dict]) -> dict:
     w, h, pad, base = 720, 250, 24, 214
-    top = max([max(s["income"], s["spending"]) for s in series] + [Decimal(1)])
+    top = max([max(s["money_in"], s["money_out"]) for s in series] + [Decimal(1)])
     slot = (w - 2 * pad) / max(len(series), 1)
     bw = slot * 0.3
     bars = []
     for i, s in enumerate(series):
         x = pad + i * slot + slot * 0.17
-        hi = float(s["income"] / top) * (base - 34)
-        ho = float(s["spending"] / top) * (base - 34)
+        hi = float(s["money_in"] / top) * (base - 34)
+        ho = float(s["money_out"] / top) * (base - 34)
         bars.append({"x_in": round(x, 1), "x_out": round(x + bw + 3, 1), "w": round(bw, 1),
                      "y_in": round(base - hi, 1), "h_in": round(hi, 1), "y_out": round(base - ho, 1), "h_out": round(ho, 1),
                      "lx": round(x + bw + 1.5, 1), "label": s["start"].strftime("%b %Y"),
-                     "v_in": rupiah_short(s["income"]), "v_out": rupiah_short(s["spending"]),
-                     "title": f"{s['start']:%B %Y}: in {rupiah(s['income'])}, out {rupiah(s['spending'])}"})
+                     "v_in": rupiah_short(s["money_in"]), "v_out": rupiah_short(s["money_out"]),
+                     "title": f"{s['start']:%B %Y}: in {rupiah(s['money_in'])}, out {rupiah(s['money_out'])}"})
     return {"w": w, "h": h, "base": base, "bars": bars}
 
 

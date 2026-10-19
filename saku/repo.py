@@ -245,7 +245,7 @@ class Repo:
 
     # ---- reporting ------------------------------------------------------------------------------
     def cashflow(self, tenant_id: str, start: date, end: date) -> dict:
-        """Income, spending and net for [start, end). Own transfers are excluded; refunds reduce spending."""
+        """Income, spending and net for [start, end). Own transfers are excluded globally but included per account."""
         income, gross, refunds, transfers, n = self.c.execute(
             "SELECT "
             " COALESCE(SUM(amount) FILTER (WHERE amount > 0 AND kind = 'normal'), 0),"
@@ -259,19 +259,25 @@ class Repo:
         spending = gross - refunds
         by_account = self.c.execute(
             "SELECT a.label, COUNT(t.id),"
-            " COALESCE(SUM(t.amount) FILTER (WHERE t.amount > 0 AND t.kind <> 'own_transfer'), 0),"
-            " COALESCE(-SUM(t.amount) FILTER (WHERE t.amount < 0 AND t.kind <> 'own_transfer'), 0) "
+            " COALESCE(SUM(t.amount) FILTER (WHERE t.amount > 0), 0),"
+            " COALESCE(-SUM(t.amount) FILTER (WHERE t.amount < 0), 0) "
             "FROM account a LEFT JOIN txn t ON t.account_id = a.id AND t.tenant_id = a.tenant_id "
             " AND t.booked_on >= %s AND t.booked_on < %s "
             "WHERE a.tenant_id = %s GROUP BY a.id, a.label ORDER BY a.id",
             (start, end, tenant_id),
         ).fetchall()
+        by_account = [
+            {"label": l, "transactions": c, "money_in": Decimal(i), "money_out": Decimal(o)}
+            for l, c, i, o in by_account
+        ]
+        money_in = sum((row["money_in"] for row in by_account), Decimal("0"))
+        money_out = sum((row["money_out"] for row in by_account), Decimal("0"))
         return {
             "start": start, "end": end, "transactions": n,
             "income": Decimal(income), "spending": Decimal(spending), "net": Decimal(income) - Decimal(spending),
+            "money_in": money_in, "money_out": money_out, "movement_net": money_in - money_out,
             "refunds": Decimal(refunds), "own_transfer_rows_excluded": transfers,
-            "by_account": [{"label": l, "transactions": c, "money_in": Decimal(i), "money_out": Decimal(o)}
-                           for l, c, i, o in by_account],
+            "by_account": by_account,
         }
 
     def txn_count(self, tenant_id: str) -> int:
