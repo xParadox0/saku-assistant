@@ -44,7 +44,7 @@
           <label class="field"><span>Amount</span><input type="number" name="amount" step="0.01" value="{{ t.amount }}" required></label>
           <label class="field"><span>Description</span><input name="description" maxlength="200" value="{{ t.description|title }}" required></label>
           <label class="field"><span>Type</span><select name="kind">{% for k in kinds %}<option value="{{ k }}" {% if k == t.kind %}selected{% endif %}>{{ k|replace('_', ' ')|title }}</option>{% endfor %}{% if t.kind == 'own_transfer' %}<option value="own_transfer" selected>Own transfer</option>{% endif %}</select></label>
-          <button type="submit" class="quiet">Save changes</button>
+          <button type="submit">Save changes</button>
         </form>
         <form method="post" action="/app/transactions/{{ t.id }}/delete" class="transaction-delete">
           <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Delete transaction</button>
