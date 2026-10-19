@@ -380,6 +380,9 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
 }
 @media (max-width: 640px) {
   h1 { font-size: 28px; }
+  .nav[data-mobile-layout="all-visible"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: visible; gap: 6px; }
+  .nav[data-mobile-layout="all-visible"] a { min-width: 0; justify-content: center; padding: 10px 6px; font-size: 12px; }
+  .nav[data-mobile-layout="all-visible"] a span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .hello .button { width: 100%; }
   .card { padding: 18px; border-radius: 18px; }
   .where-body { grid-template-columns: minmax(0, 1fr); justify-items: center; }

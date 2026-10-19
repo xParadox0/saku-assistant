@@ -96,11 +96,12 @@
     <div class="field provider-field">
       <label for="provider-search">Search provider</label>
       <div class="provider-combobox" data-provider-combobox>
-        <input id="provider-search" type="search" name="provider" required maxlength="30" autocomplete="off"
+        <input type="hidden" name="provider" data-provider-value>
+        <input id="provider-search" type="search" required maxlength="60" autocomplete="off"
                placeholder="Search bank" role="combobox" aria-autocomplete="list" aria-controls="provider-options" aria-expanded="false">
         <div id="provider-options" class="provider-options" role="listbox" hidden>
           {% for value, label, kind in providers %}
-          <button type="button" class="provider-option" role="option" data-provider="{{ value }}" data-label="{{ label|lower }}" data-kind="{{ kind }}">
+          <button type="button" class="provider-option" role="option" data-provider="{{ value }}" data-display="{{ label }}" data-label="{{ label|lower }}" data-kind="{{ kind }}">
             <span>{{ label }}</span><small>{{ {'bank':'Bank','ewallet':'E-wallet','cash':'Cash'}[kind] }}</small>
           </button>
           {% endfor %}

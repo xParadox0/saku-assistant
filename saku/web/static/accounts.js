@@ -3,7 +3,8 @@
   const box = document.querySelector('[data-provider-combobox]');
   if (!form || !box) return;
 
-  const input = box.querySelector('input[name="provider"]');
+  const input = box.querySelector('#provider-search');
+  const valueInput = box.querySelector('[data-provider-value]');
   const list = box.querySelector('.provider-options');
   const empty = box.querySelector('[data-provider-empty]');
   const help = form.querySelector('[data-provider-help]');
@@ -17,6 +18,7 @@
     cash: ['Search cash provider', 'Cash providers only.'],
   };
   const visibleOptions = () => options.filter((option) => !option.hidden);
+  const normalise = (value) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
 
   function openList() {
     list.hidden = false;
@@ -43,21 +45,32 @@
   }
 
   function selectOption(option) {
-    input.value = option.dataset.provider;
+    input.value = option.dataset.display;
+    input.dataset.selectedProvider = option.dataset.provider;
+    valueInput.value = option.dataset.provider;
+    input.focus({preventScroll: true});
     closeList();
-    input.focus();
   }
 
   function syncKind({clear = false} = {}) {
     const [placeholder, hint] = labels[activeKind()];
     input.placeholder = placeholder;
     help.textContent = hint;
-    if (clear) input.value = '';
+    if (clear) {
+      input.value = '';
+      valueInput.value = '';
+      delete input.dataset.selectedProvider;
+    }
     filterOptions();
   }
 
   input.addEventListener('focus', () => { filterOptions(); openList(); });
-  input.addEventListener('input', () => { filterOptions(); openList(); });
+  input.addEventListener('input', () => {
+    delete input.dataset.selectedProvider;
+    valueInput.value = normalise(input.value);
+    filterOptions();
+    openList();
+  });
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') { closeList(); return; }
     if (event.key === 'ArrowDown') {
@@ -85,7 +98,7 @@
   kinds.forEach((radio) => radio.addEventListener('change', () => syncKind({clear: true})));
   document.addEventListener('click', (event) => { if (!box.contains(event.target)) closeList(); });
   form.addEventListener('submit', () => {
-    input.value = input.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30);
+    valueInput.value = input.dataset.selectedProvider || normalise(input.value);
   });
 
   syncKind();

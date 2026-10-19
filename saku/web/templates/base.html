@@ -22,7 +22,7 @@
       <p class="tagline">All your accounts, one honest monthly picture.</p>
     </div>
     {% if email %}
-    <nav class="nav" aria-label="Main">
+    <nav class="nav" aria-label="Main" data-mobile-layout="all-visible">
       <a href="/app" {% if page == 'overview' %}aria-current="page"{% endif %}>{{ icon('i-home') }}<span>Dashboard</span></a>
       <a href="/app/accounts" {% if page == 'accounts' %}aria-current="page"{% endif %}>{{ icon('i-wallet') }}<span>Accounts</span></a>
       <a href="/app/imports" {% if page == 'imports' %}aria-current="page"{% endif %}>{{ icon('i-file') }}<span>Imports</span></a>
