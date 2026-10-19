@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Transactions · Saku{% endblock %}
+{% block content %}
+<header class="hello rise">
+  <div><h1>Manage transactions</h1><p class="lede">Add a transaction from the web, correct a detail, or remove a duplicate. Negative amounts are money out; positive amounts are money in.</p></div>
+</header>
+{% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
+
+<section class="card rise" id="add-transaction">
+  <div class="card-head"><h2>Add transaction</h2><span class="hint">Use the same account names as the Dashboard</span></div>
+  <form method="post" action="/app/transactions" class="grid-form transaction-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field"><span>Account</span><select name="account_id" required>{% for a in accounts %}<option value="{{ a.id }}">{{ a.label }}</option>{% endfor %}</select></label>
+    <label class="field"><span>Date</span><input type="date" name="booked_on" required></label>
+    <label class="field"><span>Amount</span><input type="number" name="amount" step="0.01" required placeholder="-45000"><small>Negative out · positive in</small></label>
+    <label class="field"><span>Type</span><select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k|replace('_', ' ')|title }}</option>{% endfor %}</select></label>
+    <label class="field wide"><span>Description</span><input name="description" maxlength="200" required placeholder="Lunch"></label>
+    <button type="submit">{{ icon('i-plus') }}Add transaction</button>
+  </form>
+</section>
+
+<section class="panel rise d1">
+  <div class="card-head"><h2>All transactions</h2><span class="hint">{{ transactions|length }} shown</span></div>
+  {% if transactions %}
+  <div class="transaction-list">
+  {% for t in transactions %}
+    <article class="transaction-row" data-txn-id="{{ t.id }}">
+      <form method="post" action="/app/transactions/{{ t.id }}" class="transaction-edit">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label class="field"><span class="sr-only">Account</span><select name="account_id" required>{% for a in accounts %}<option value="{{ a.id }}" {% if a.id == t.account_id %}selected{% endif %}>{{ a.label }}</option>{% endfor %}</select></label>
+        <label class="field"><span class="sr-only">Date</span><input type="date" name="booked_on" value="{{ t.booked_on }}" required></label>
+        <label class="field"><span class="sr-only">Amount</span><input type="number" name="amount" step="0.01" value="{{ t.amount }}" required></label>
+        <label class="field"><span class="sr-only">Description</span><input name="description" maxlength="200" value="{{ t.description|title }}" required></label>
+        <label class="field"><span class="sr-only">Type</span><select name="kind">{% for k in kinds %}<option value="{{ k }}" {% if k == t.kind %}selected{% endif %}>{{ k|replace('_', ' ')|title }}</option>{% endfor %}{% if t.kind == 'own_transfer' %}<option value="own_transfer" selected>Own transfer</option>{% endif %}</select></label>
+        <button type="submit" class="quiet">Save</button>
+      </form>
+      <form method="post" action="/app/transactions/{{ t.id }}/delete">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Delete</button>
+      </form>
+    </article>
+  {% endfor %}
+  </div>
+  {% else %}<p class="lede">No transactions yet. Add the first one above or import a statement.</p>{% endif %}
+</section>
+{% endblock %}

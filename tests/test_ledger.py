@@ -70,3 +70,21 @@ def test_refund_matching_a_purchase_is_not_hidden_as_transfer(repo):
     repo.import_rows("t1", a, [RawTxn(date(2026, 7, 1), Decimal(-120_000), "TOKO DEMO")], "csv", "t")
     repo.import_rows("t1", b, [RawTxn(date(2026, 7, 2), Decimal(120_000), "REFUND TOKO DEMO")], "csv", "t")
     assert repo.detect_own_transfers("t1") == 0
+
+
+def test_manual_transfer_is_excluded_from_cashflow_and_keeps_both_sides(repo):
+    repo.ensure_tenant("t1")
+    source = repo.add_account("t1", "bank", "bank_a", "Main bank")
+    target = repo.add_account("t1", "ewallet", "gopay", "GoPay")
+    rows = [
+        RawTxn(date(2026, 10, 1), Decimal(-250_000), "TRANSFER TO GOPAY", "own_transfer"),
+        RawTxn(date(2026, 10, 1), Decimal(250_000), "TRANSFER FROM MAIN BANK", "own_transfer"),
+    ]
+    repo.import_manual_rows("t1", source, [rows[0]], "telegram:test:source")
+    repo.import_manual_rows("t1", target, [rows[1]], "telegram:test:target")
+    repo.detect_own_transfers("t1")
+    cf = repo.cashflow("t1", date(2026, 10, 1), date(2026, 11, 1))
+    assert cf["income"] == Decimal("0")
+    assert cf["spending"] == Decimal("0")
+    assert cf["own_transfer_rows_excluded"] == 2
+    assert {row["kind"] for row in repo.recent_txns("t1", 10)} == {"own_transfer"}

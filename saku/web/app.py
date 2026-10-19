@@ -47,6 +47,8 @@ ASSET_VERSION = hashlib.sha256(
     b"".join((HERE / "static" / name).read_bytes() for name in ("saku.css", "accounts.js"))
 ).hexdigest()[:12]
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
+TRANSACTION_KINDS = ("normal", "fee", "refund", "own_transfer")
+WEB_ENTRY_KINDS = ("normal", "fee", "refund")
 PROVIDER_SUGGESTIONS = [
     ("bca", "BCA", "bank"), ("bri", "BRI", "bank"), ("bni", "BNI", "bank"),
     ("mandiri", "Mandiri", "bank"), ("btn", "BTN", "bank"), ("cimb", "CIMB Niaga", "bank"),
@@ -272,6 +274,78 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             ident, member = who(request, repo)
             ctx = overview_ctx(repo, member["tenant_id"], ident.email.split("@")[0].split(".")[0].title())
             return render(request, "overview.html", ident, member, **ctx)
+
+    def transaction_form_values(account_id: str, booked_on: str, amount: str, description: str, kind: str):
+        try:
+            account = int(account_id)
+            day = date.fromisoformat(booked_on)
+            value = Decimal(amount)
+        except (TypeError, ValueError, ArithmeticError):
+            raise Forbidden("Enter a valid account, date, and amount.") from None
+        if value == 0 or day > date.today() or not description.strip() or len(description.strip()) > 200:
+            raise Forbidden("Description is required, amount cannot be zero, and the date cannot be in the future.")
+        if kind not in TRANSACTION_KINDS:
+            raise Forbidden("Unknown transaction type.")
+        return account, day, value, description.strip(), kind
+
+    @app.get("/app/transactions", response_class=HTMLResponse)
+    def transactions(request: Request, notice: str | None = None):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            notices = {
+                "created": "Transaction added.", "updated": "Transaction updated.",
+                "deleted": "Transaction deleted.", "transfer_deleted": "Transfer and its paired row deleted.",
+            }
+            return render(request, "transactions.html", ident, member, page="transactions",
+                          transactions=repo.transactions(member["tenant_id"]), accounts=repo.accounts(member["tenant_id"]),
+                          kinds=WEB_ENTRY_KINDS, notice=notices.get(notice or ""))
+
+    @app.post("/app/transactions")
+    def add_transaction(request: Request, csrf: str = Form(""), account_id: str = Form(""),
+                        booked_on: str = Form(""), amount: str = Form(""), description: str = Form(""),
+                        kind: str = Form("normal")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            account, day, value, text, txn_kind = transaction_form_values(account_id, booked_on, amount, description, kind)
+            if txn_kind == "own_transfer":
+                raise Forbidden("Add an internal transfer from Telegram so Saku can save both account sides.")
+            try:
+                repo.create_transaction(member["tenant_id"], account, day, value, text, txn_kind,
+                                        f"web:{ident.email}:{secrets.token_hex(8)}")
+            except (PermissionError, ValueError):
+                raise NotFound("Account not found.") from None
+            repo.detect_own_transfers(member["tenant_id"])
+            repo.apply_categories(member["tenant_id"])
+        return RedirectResponse("/app/transactions?notice=created", status_code=303)
+
+    @app.post("/app/transactions/{txn_id}")
+    def edit_transaction(request: Request, txn_id: int, csrf: str = Form(""), account_id: str = Form(""),
+                         booked_on: str = Form(""), amount: str = Form(""), description: str = Form(""),
+                         kind: str = Form("normal")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            account, day, value, text, txn_kind = transaction_form_values(account_id, booked_on, amount, description, kind)
+            try:
+                changed = repo.update_transaction(member["tenant_id"], txn_id, account, day, value, text, txn_kind)
+            except (PermissionError, ValueError):
+                raise Forbidden("Check the transaction fields.") from None
+            if not changed:
+                raise NotFound("Transaction not found.")
+            repo.detect_own_transfers(member["tenant_id"])
+            repo.apply_categories(member["tenant_id"])
+        return RedirectResponse("/app/transactions?notice=updated", status_code=303)
+
+    @app.post("/app/transactions/{txn_id}/delete")
+    def remove_transaction(request: Request, txn_id: int, csrf: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            count = repo.delete_transaction(member["tenant_id"], txn_id)
+            if not count:
+                raise NotFound("Transaction not found.")
+        return RedirectResponse("/app/transactions?notice=" + ("transfer_deleted" if count == 2 else "deleted"), status_code=303)
 
     @app.get("/app/accounts", response_class=HTMLResponse)
     def accounts(request: Request, batch: int | None = None, notice: str | None = None):

@@ -146,6 +146,7 @@ def test_chat_records_two_expenses_and_confirms_what_was_saved(two, conn):
     assert "2 transaksi" in reply
     assert "Rp10.000" in reply
     assert "Alice Main" in reply
+    assert "Gorengan" in reply and "Air mineral" in reply
     assert "hari ini" in reply
 
 
@@ -172,6 +173,29 @@ def test_chat_asks_for_account_then_saves_after_the_follow_up(two, conn):
     saved = bot.handle(two, upd(ALICE_TG, "Alice Main"), agent=agent)[0].text
     assert conn.execute("SELECT count(*) FROM txn WHERE tenant_id = 'alice'").fetchone()[0] == before + 2
     assert "Berhasil disimpan" in saved
+
+
+def test_chat_records_internal_transfer_as_two_details_without_inflating_cashflow(two, conn):
+    two.add_account("alice", "ewallet", "gopay", "Alice GoPay")
+    bot.handle(two, upd(ALICE_TG, f"/start {two.create_link_code('alice@example.com')}"))
+    agent = FixedAgent({
+        "intent": "record",
+        "transactions": [
+            {"description": "Transfer ke GoPay", "amount_idr": 250000, "direction": "expense",
+             "kind": "own_transfer", "date": None, "account_hint": "Alice Main"},
+            {"description": "Transfer dari bank", "amount_idr": 250000, "direction": "income",
+             "kind": "own_transfer", "date": None, "account_hint": "Alice GoPay"},
+        ],
+    })
+    reply = bot.handle(two, upd(ALICE_TG, "Pindah 250rb dari Alice Main ke Alice GoPay"), agent=agent)[0].text
+    assert "transfer internal Rp250.000" in reply
+    assert "tidak dihitung sebagai income atau spending" in reply
+    rows = conn.execute("SELECT id, amount, kind, transfer_pair FROM txn WHERE tenant_id = 'alice' ORDER BY id DESC LIMIT 2").fetchall()
+    assert rows[0][1] == Decimal("250000.00") and rows[1][1] == Decimal("-250000.00")
+    assert rows[0][2] == rows[1][2] == "own_transfer"
+    assert rows[0][3] == rows[1][0] and rows[1][3] == rows[0][0]
+    cashflow = two.cashflow("alice", date(2026, 1, 1), date(2027, 1, 1))
+    assert cashflow["income"] == Decimal("5000000") and cashflow["spending"] == Decimal("0")
 
 
 def test_chat_refuses_incomplete_or_unavailable_agent_without_silent_loss(two, conn):

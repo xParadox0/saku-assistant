@@ -17,7 +17,7 @@ import psycopg
 from .normalise import RawTxn, fingerprints, money, normalise_description
 
 ACCOUNT_KINDS = {"bank", "ewallet", "cash"}
-SAFE_APP_PATHS = {"/app", "/app/accounts", "/app/imports", "/app/settings"}
+SAFE_APP_PATHS = {"/app", "/app/accounts", "/app/imports", "/app/transactions", "/app/settings"}
 
 # A pair only counts as an own transfer when at least one side looks like a transfer or top-up.
 # Without this, a refund that happens to match a purchase amount on another account would be hidden.
@@ -134,6 +134,74 @@ class Repo:
             )
         return ImportResult(batch_id, len(rows), new, duplicate)
 
+    # ---- manual transaction management ------------------------------------------------------------
+    def transactions(self, tenant_id: str, limit: int = 100) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT t.id, t.booked_on, t.account_id, a.label, t.amount, t.description, t.kind, t.category "
+            "FROM txn t JOIN account a ON a.id = t.account_id AND a.tenant_id = t.tenant_id "
+            "WHERE t.tenant_id = %s ORDER BY t.booked_on DESC, t.id DESC LIMIT %s", (tenant_id, limit))
+        keys = ("id", "booked_on", "account_id", "account", "amount", "description", "kind", "category")
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+
+    def _manual_fingerprint(self, tenant_id: str, account_id: int, booked_on: date,
+                            amount: Decimal, description: str, source_ref: str) -> str:
+        return hashlib.sha256(
+            f"{tenant_id}|web|{source_ref}|{account_id}|{booked_on}|{money(amount)}|{normalise_description(description)}".encode()
+        ).hexdigest()
+
+    def create_transaction(self, tenant_id: str, account_id: int, booked_on: date, amount: Decimal,
+                           description: str, kind: str = "normal", source_ref: str = "web") -> int:
+        self._own_account(tenant_id, account_id)
+        row = RawTxn(booked_on, amount, description, kind)
+        with self.c.transaction():
+            batch_id = self.c.execute(
+                "INSERT INTO import_batch (tenant_id, account_id, source, parser, status, rows_in, rows_new, rows_dup) "
+                "VALUES (%s, %s, 'manual', 'web/1', 'ok', 1, 1, 0) RETURNING id",
+                (tenant_id, account_id)).fetchone()[0]
+            fingerprint = self._manual_fingerprint(tenant_id, account_id, row.booked_on, row.amount, row.description, source_ref)
+            inserted = self.c.execute(
+                "INSERT INTO txn (tenant_id, account_id, batch_id, booked_on, amount, description, kind, fingerprint) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (tenant_id, account_id, batch_id, row.booked_on, money(row.amount),
+                 normalise_description(row.description), row.kind, fingerprint)).fetchone()
+        return inserted[0]
+
+    def update_transaction(self, tenant_id: str, txn_id: int, account_id: int, booked_on: date,
+                           amount: Decimal, description: str, kind: str = "normal") -> bool:
+        self._own_account(tenant_id, account_id)
+        RawTxn(booked_on, amount, description, kind)
+        current = self.c.execute(
+            "SELECT transfer_pair FROM txn WHERE id = %s AND tenant_id = %s", (txn_id, tenant_id)).fetchone()
+        if current is None:
+            return False
+        with self.c.transaction():
+            if current[0] is not None:
+                self.c.execute("UPDATE txn SET transfer_pair = NULL, kind = 'normal', category = NULL, cat_source = NULL "
+                               "WHERE id = %s AND tenant_id = %s", (current[0], tenant_id))
+            fingerprint = self._manual_fingerprint(tenant_id, account_id, booked_on, amount, description, f"edit:{txn_id}")
+            self.c.execute(
+                "UPDATE txn SET account_id = %s, booked_on = %s, amount = %s, description = %s, kind = %s, "
+                "transfer_pair = NULL, category = NULL, cat_source = NULL, fingerprint = %s "
+                "WHERE id = %s AND tenant_id = %s",
+                (account_id, booked_on, money(amount), normalise_description(description), kind, fingerprint, txn_id, tenant_id))
+        return True
+
+    def delete_transaction(self, tenant_id: str, txn_id: int) -> int:
+        row = self.c.execute(
+            "SELECT transfer_pair FROM txn WHERE id = %s AND tenant_id = %s", (txn_id, tenant_id)).fetchone()
+        if row is None:
+            return 0
+        pair = row[0]
+        with self.c.transaction():
+            if pair is not None:
+                self.c.execute("UPDATE txn SET transfer_pair = NULL WHERE id IN (%s, %s) AND tenant_id = %s",
+                               (txn_id, pair, tenant_id))
+                self.c.execute("DELETE FROM txn WHERE id IN (%s, %s) AND tenant_id = %s",
+                               (txn_id, pair, tenant_id))
+                return 2
+            self.c.execute("DELETE FROM txn WHERE id = %s AND tenant_id = %s", (txn_id, tenant_id))
+        return 1
+
     # ---- own transfers --------------------------------------------------------------------------
     def detect_own_transfers(self, tenant_id: str, window_days: int = 3) -> int:
         """Pair an outflow and an inflow of the same amount between two of the tenant's accounts within
@@ -141,7 +209,7 @@ class Repo:
         and stop counting as income or spending. Returns the number of pairs made."""
         rows = self.c.execute(
             "SELECT id, account_id, booked_on, amount, description FROM txn "
-            "WHERE tenant_id = %s AND kind = 'normal' AND transfer_pair IS NULL ORDER BY booked_on, id",
+            "WHERE tenant_id = %s AND kind IN ('normal', 'own_transfer') AND transfer_pair IS NULL ORDER BY booked_on, id",
             (tenant_id,),
         ).fetchall()
         outs = [r for r in rows if r[3] < 0]

@@ -134,6 +134,37 @@ def test_add_rename_delete_account(client):
     assert "Pocket" in page
 
 
+def test_web_transaction_crud_is_tenant_scoped(client, seeded):
+    token = csrf(client, "alice@example.com")
+    response = client.post("/app/transactions", data={
+        "csrf": token, "account_id": seeded["alice_acc"], "booked_on": "2026-10-01",
+        "amount": "-45000", "description": "Kopi", "kind": "normal",
+    }, headers=as_("alice@example.com"), follow_redirects=False)
+    assert response.status_code == 303
+    page = client.get("/app/transactions", headers=as_("alice@example.com")).text
+    assert "Kopi" in page
+    txn_id = int(page.split('data-txn-id="', 1)[1].split('"', 1)[0])
+    response = client.post(f"/app/transactions/{txn_id}", data={
+        "csrf": token, "account_id": seeded["alice_acc"], "booked_on": "2026-10-02",
+        "amount": "-50000", "description": "Updated coffee", "kind": "normal",
+    }, headers=as_("alice@example.com"), follow_redirects=False)
+    assert response.status_code == 303
+    assert "Updated Coffee" in client.get("/app/transactions", headers=as_("alice@example.com")).text
+    assert client.post(f"/app/transactions/{txn_id}/delete", data={"csrf": token},
+                       headers=as_("alice@example.com"), follow_redirects=False).status_code == 303
+    assert "Updated Coffee" not in client.get("/app/transactions", headers=as_("alice@example.com")).text
+
+
+def test_web_transaction_cannot_edit_other_tenant(client, seeded, conn):
+    token = csrf(client, "alice@example.com")
+    bob_txn = conn.execute("SELECT id FROM txn WHERE tenant_id = 'bob' LIMIT 1").fetchone()[0]
+    response = client.post(f"/app/transactions/{bob_txn}", data={
+        "csrf": token, "account_id": seeded["alice_acc"], "booked_on": "2026-10-02",
+        "amount": "-1", "description": "Nope", "kind": "normal",
+    }, headers=as_("alice@example.com"))
+    assert response.status_code == 404
+
+
 def test_account_with_transactions_is_not_deleted(client, seeded):
     tok = csrf(client, "alice@example.com")
     r = client.post(f"/app/accounts/{seeded['alice_acc']}/delete", data={"csrf": tok}, headers=as_("alice@example.com"))

@@ -99,9 +99,17 @@ def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict],
         choices = " / ".join(account["label"] for account in accounts)
         return f"Belum disimpan. Account yang dipakai belum jelas. Balas salah satu nama account ini: {choices}."
 
+    transfer_indexes = [i for i, row in enumerate(transactions) if row.get("kind") == "own_transfer"]
+    transfer_rows = [transactions[i] for i in transfer_indexes]
+    if transfer_rows and (len(transfer_rows) != 2 or resolved[transfer_indexes[0]] == resolved[transfer_indexes[1]]):
+        return "Belum disimpan. Transfer harus menyebutkan satu account asal dan satu account tujuan."
+
     rows_by_account: dict[int, tuple[dict, list[RawTxn]]] = {}
     assumed_today = False
-    total = Decimal(0)
+    total_in = Decimal(0)
+    total_out = Decimal(0)
+    transfer_amount = Decimal(0)
+    saved_details = []
     for item, account in zip(transactions, resolved):
         booked_on = date.fromisoformat(item["date"]) if item.get("date") else today
         assumed_today |= item.get("date") is None
@@ -110,10 +118,20 @@ def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict],
         amount = Decimal(item["amount_idr"])
         if item["direction"] == "expense":
             amount = -amount
-        total += abs(amount)
+        if item.get("kind") == "own_transfer":
+            transfer_amount += abs(amount)
+            description = "TRANSFER " + item["description"]
+        elif amount > 0:
+            total_in += amount
+            description = item["description"]
+        else:
+            total_out += abs(amount)
+            description = item["description"]
         rows_by_account.setdefault(account["id"], (account, []))[1].append(
-            RawTxn(booked_on, amount, item["description"])
+            RawTxn(booked_on, amount, description, item.get("kind", "normal"))
         )
+        sign = "+" if amount > 0 else "-"
+        saved_details.append(f"{item['description']} {sign}{rupiah(abs(amount))} ({account['label']})")
 
     stored = duplicate = 0
     labels = []
@@ -131,8 +149,17 @@ def _record(repo: Repo, who: dict, uid: int, parsed: dict, accounts: list[dict],
     when = " untuk hari ini" if assumed_today else ""
     account_text = ", ".join(dict.fromkeys(labels))
     detail = f" ({duplicate} duplikat dilewati)" if duplicate else ""
-    return (f"Berhasil disimpan: {stored} transaksi, total {rupiah(total)}, account {account_text}{when}{detail}. "
-            "Datanya sudah masuk ke Dashboard.")
+    if transfer_rows:
+        transfer_total = transfer_amount / 2
+        flow = f"transfer internal {rupiah(transfer_total)}"
+    else:
+        flow = f"money in {rupiah(total_in)}, money out {rupiah(total_out)}"
+    details_text = "; ".join(saved_details)
+    return (f"Berhasil disimpan: {stored} detail, {flow}, account {account_text}{when}{detail}. "
+            f"Detail: {details_text}. "
+            "Transfer internal tidak dihitung sebagai income atau spending. Datanya sudah masuk ke Dashboard." if transfer_rows else
+            f"Berhasil disimpan: {stored} transaksi, total {rupiah(total_in + total_out)}, {flow}, "
+            f"account {account_text}{when}{detail}. Detail: {details_text}. Datanya sudah masuk ke Dashboard.")
 
 
 def handle(repo: Repo, update: dict, agent=None) -> list[Reply]:

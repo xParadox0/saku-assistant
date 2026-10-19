@@ -339,6 +339,13 @@ button.quiet:hover { background: var(--surface-3); }
 button.danger { background: transparent; color: var(--neg); padding: 10px 12px; }
 button.danger:hover { background: var(--neg-soft); }
 .row-form { display: flex; gap: 8px; align-items: center; }
+.transaction-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.transaction-form .wide { grid-column: span 2; }
+.transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+.transaction-edit { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, .8fr) minmax(120px, .8fr) minmax(150px, 1.4fr) minmax(120px, .8fr) auto; gap: 8px; align-items: end; }
+.transaction-row .field { gap: 0; }
+.transaction-row .field input, .transaction-row .field select { min-height: 40px; padding: 8px 10px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
 
@@ -377,6 +384,12 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
   .account-form .account-kind, .account-form .provider-field, .account-form .last4-field,
   .account-form .name-field, .account-form .add-submit { grid-column: 1; grid-row: auto; }
   .account-form .add-submit button { width: 100%; }
+  .transaction-form { grid-template-columns: minmax(0, 1fr); }
+  .transaction-form .wide { grid-column: auto; }
+  .transaction-form button { width: 100%; }
+  .transaction-row { grid-template-columns: minmax(0, 1fr); }
+  .transaction-edit { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transaction-edit button { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
   h1 { font-size: 28px; }
