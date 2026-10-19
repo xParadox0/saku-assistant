@@ -339,8 +339,10 @@ button.quiet:hover { background: var(--surface-3); }
 button.danger { background: transparent; color: var(--neg); padding: 10px 12px; }
 button.danger:hover { background: var(--neg-soft); }
 .row-form { display: flex; gap: 8px; align-items: center; }
-.transaction-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.transaction-form { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; }
 .transaction-form .wide { grid-column: span 2; }
+.transaction-form > button { align-self: end; }
+.transaction-form input, .transaction-form select { height: 44px; min-height: 44px; }
 .transaction-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
 .transaction-edit { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, .8fr) minmax(120px, .8fr) minmax(150px, 1.4fr) minmax(120px, .8fr) auto; gap: 8px; align-items: end; }
 .transaction-row .field { gap: 0; }
