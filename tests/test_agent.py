@@ -33,6 +33,7 @@ def test_bridge_prompt_keeps_cash_even_without_a_cash_account():
     prompt = build_prompt({"op": "extract_transactions", "text": "parkir 5rb cash",
                            "accounts": [{"label": "BCA", "provider": "bca"}], "today": "2026-10-19"})
     assert 'account_hint to "cash"' in prompt
+    assert "put that account_hint on every item" in prompt
 
 
 def test_transfer_extraction_requires_two_tagged_sides():

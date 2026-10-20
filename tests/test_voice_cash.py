@@ -596,3 +596,55 @@ def test_voice_failure_log_names_the_step_but_no_secret(alice, caplog):
     assert "Belum disimpan" in reply
     assert "voice download failed: URLError (TimeoutError)" in caplog.text
     assert "SYNTHETIC" not in caplog.text and "parkir" not in caplog.text.lower()
+
+
+# ---- one account at the end of a list applies to every item -----------------------------------------
+def _rows(*items):
+    return {"intent": "record", "transactions": [
+        {"description": d, "amount_idr": a, "direction": "expense", "date": None, "account_hint": h} for d, a, h in items]}
+
+
+def test_trailing_account_applies_to_every_item_when_the_agent_tags_only_the_last(alice, conn):
+    """Production case: Haiku returned [gorengan: null, air: gopay] for '... lewat GoPay.'"""
+    text = "Beli gorengan 5.000, air minuman 5.000 lewat GoPay."
+    reply = bot.handle(alice, text_upd(ALICE_TG, text),
+                       agent=FixedAgent(_rows(("Gorengan", 5000, None), ("Air minuman", 5000, "gopay"))))[0].text
+    assert "Berhasil disimpan" in reply
+    assert _saved_to(conn) == {"GORENGAN": "Alice GoPay", "AIR MINUMAN": "Alice GoPay"}
+
+
+def test_trailing_account_fills_several_unnamed_items(alice, conn):
+    text = "kopi 20rb, parkir 5rb, makan 10rb pakai gopay aja"
+    bot.handle(alice, text_upd(ALICE_TG, text),
+               agent=FixedAgent(_rows(("Kopi", 20000, None), ("Parkir", 5000, None), ("Makan", 10000, "GoPay"))))
+    assert _saved_to(conn) == {"KOPI": "Alice GoPay", "PARKIR": "Alice GoPay", "MAKAN": "Alice GoPay"}
+
+
+def test_trailing_cash_without_cash_account_offers_cash_for_every_item(alice, conn):
+    text = "kopi 20rb, parkir 5rb cash"
+    first = bot.handle(alice, text_upd(ALICE_TG, text),
+                       agent=FixedAgent(_rows(("Kopi", 20000, None), ("Parkir", 5000, "cash"))))[0].text
+    assert "belum punya account cash" in first
+    bot.handle(alice, text_upd(ALICE_TG, "Cash"), agent=FixedAgent({"intent": "unknown", "transactions": []}))
+    assert _saved_to(conn) == {"KOPI": "Cash", "PARKIR": "Cash"}
+
+
+def test_account_in_the_middle_is_not_spread_to_later_items(alice, conn):
+    text = "gorengan 5rb pakai gopay, air 5rb"
+    reply = bot.handle(alice, text_upd(ALICE_TG, text),
+                       agent=FixedAgent(_rows(("Gorengan", 5000, "gopay"), ("Air", 5000, None))))[0].text
+    assert "belum jelas" in reply and _saved_to(conn) == {}
+
+
+def test_two_different_accounts_are_never_merged(alice, conn):
+    text = "kopi 20rb pakai BCA, parkir 5rb, makan 10rb lewat gopay"
+    reply = bot.handle(alice, text_upd(ALICE_TG, text), agent=FixedAgent(
+        _rows(("Kopi", 20000, "BCA"), ("Parkir", 5000, None), ("Makan", 10000, "gopay"))))[0].text
+    assert "belum jelas" in reply and _saved_to(conn) == {}
+
+
+def test_trailing_word_that_is_not_an_account_fills_nothing(alice, conn):
+    text = "gorengan 5rb, air 5rb tadi pagi"
+    reply = bot.handle(alice, text_upd(ALICE_TG, text),
+                       agent=FixedAgent(_rows(("Gorengan", 5000, None), ("Air", 5000, "gopay"))))[0].text
+    assert "belum jelas" in reply and _saved_to(conn) == {}
