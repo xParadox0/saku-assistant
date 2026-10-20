@@ -88,6 +88,47 @@ def _says_cash(text: str) -> bool:
     return bool(_CASH_IN_TEXT.search(text or ""))
 
 
+_TRAILING_FILLER = {"aja", "saja", "ya", "dong", "deh", "yg", "yang", "nya"}
+
+
+def _ends_with_account(text: str, hint: str, accounts: list[dict]) -> bool:
+    """True if the message ends with the account the last row names ("... lewat GoPay.", "... cash aja")."""
+    words = [w for w in re.split(r"[^\w]+", (text or "").casefold()) if w]
+    while words and words[-1] in _TRAILING_FILLER:
+        words.pop()
+    if not words:
+        return False
+    if _is_cash_hint(hint):
+        return words[-1] in {"cash", "tunai", "kontan"}
+    target = _match_account(accounts, hint)
+    if target is None:
+        return False
+    for size in (1, 2, 3):
+        tail = " ".join(words[-size:]) if len(words) >= size else None
+        if tail and _match_account(accounts, tail) is target:
+            return True
+    return False
+
+
+def _spread_trailing_account(rows: list[dict], text: str, accounts: list[dict]) -> None:
+    """"gorengan 5rb, air 5rb lewat GoPay": one account said once at the end covers every item.
+
+    Only when exactly one account is named across the rows, it is on the last row, the message ends with it, and
+    no row is a transfer. Rows that named an account keep it. Anything else is left for the account question.
+    """
+    if len(rows) < 2 or any(r.get("kind") == "own_transfer" for r in rows):
+        return
+    named = [r.get("account_hint") for r in rows if r.get("account_hint")]
+    last = rows[-1].get("account_hint")
+    if not last or len({_key(h) for h in named}) != 1:
+        return
+    if not _ends_with_account(text, last, accounts):
+        return
+    for row in rows:
+        if not row.get("account_hint"):
+            row["account_hint"] = last
+
+
 def _cash_accounts(accounts: list[dict]) -> list[dict]:
     return [a for a in accounts if a.get("kind") == "cash"]
 
@@ -414,6 +455,7 @@ def handle(repo: Repo, update: dict, agent=None, transcriber=None, files=None) -
             and _says_cash(text):
         # The agent may drop "cash" when the tenant has no cash account; the user's words still say cash.
         rows[0]["account_hint"] = "cash"
+    _spread_trailing_account(rows, text, accounts)
     source_ref = f"telegram:{uid}:{msg.get('message_id', update.get('update_id', 0))}"
     return reply(_record(repo, who, uid, parsed, accounts, today, source_ref))
 

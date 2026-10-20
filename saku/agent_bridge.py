@@ -65,6 +65,7 @@ Rules:
 - If no date is stated, return null. The application will default it to today and disclose that assumption.
 - Match an account only to the supplied labels/providers. If absent or ambiguous, return null.
 - If the user paid or received cash (cash, tunai, uang cash, uang tunai, kontan), set account_hint to "cash" even when no cash account is supplied. Cashback is not cash.
+- If one account is stated once at the end of a list of items ("gorengan 5rb, air 5rb lewat GoPay"), put that account_hint on every item in the list.
 - Keep descriptions factual and short. Do not include account names in descriptions.
 - If a required value is missing, keep it null so the application can ask a follow-up.
 - For question or unknown, return an empty transactions array.
