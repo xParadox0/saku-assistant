@@ -76,6 +76,48 @@ def test_overview_explains_that_account_movements_include_transfers(client):
     assert "Movements include internal transfers" in page
 
 
+def test_dashboard_category_link_uses_the_displayed_month(client, conn):
+    conn.execute("UPDATE txn SET category = 'transport' WHERE tenant_id = 'alice' AND description = 'ALICE LUNCH'")
+    page = client.get("/app", headers=as_("alice@example.com")).text
+    assert 'href="/app/transactions?category=transport&amp;start=2026-09-01&amp;end=2026-10-01"' in page
+
+
+def test_category_detail_is_tenant_scoped_and_reconciles_category_total(client, seeded, conn):
+    repo = Repo(conn)
+    repo.import_manual_rows("alice", seeded["alice_acc"], [
+        RawTxn(date(2026, 9, 12), Decimal(-20_000), "TAXI SEPT"),
+        RawTxn(date(2026, 8, 31), Decimal(-30_000), "TAXI AUGUST"),
+        RawTxn(date(2026, 10, 1), Decimal(-40_000), "TAXI OCTOBER"),
+    ], "test:category-detail")
+    conn.execute("UPDATE txn SET category = 'transport' WHERE tenant_id = 'alice' AND description IN ('ALICE LUNCH', 'TAXI SEPT', 'TAXI AUGUST', 'TAXI OCTOBER')")
+    conn.execute("UPDATE txn SET category = 'transport' WHERE tenant_id = 'bob' AND description = 'BOB PRIVATE PURCHASE'")
+
+    response = client.get("/app/transactions?category=transport&start=2026-09-01&end=2026-10-01",
+                          headers=as_("alice@example.com"))
+    page = response.text
+    assert response.status_code == 200
+    assert "Transport" in page and "Rp100.000" in page
+    assert "Alice Lunch" in page and "Taxi Sept" in page
+    assert "Taxi August" not in page and "Taxi October" not in page
+    assert "Bob Private Purchase" not in page
+    assert "Read-only category detail" in page
+    assert 'id="add-transaction"' not in page and "Delete transaction" not in page
+
+
+def test_invalid_category_detail_filter_is_rejected_not_broadened(client):
+    response = client.get("/app/transactions?category=income&start=2026-09-01&end=2026-10-01",
+                          headers=as_("alice@example.com"))
+    assert response.status_code == 403
+
+
+def test_category_detail_has_an_explicit_empty_state(client):
+    response = client.get("/app/transactions?category=health&start=2026-09-01&end=2026-10-01",
+                          headers=as_("alice@example.com"))
+    assert response.status_code == 200
+    assert "No Health spending transactions for this period." in response.text
+    assert "All transactions" not in response.text
+
+
 def test_overview_money_in_and_out_include_internal_transfers(client, seeded):
     with psycopg.connect(seeded["url"], autocommit=True) as conn:
         repo = Repo(conn)

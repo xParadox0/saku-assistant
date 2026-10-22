@@ -143,6 +143,17 @@ class Repo:
         keys = ("id", "booked_on", "account_id", "account", "amount", "description", "kind", "category")
         return [dict(zip(keys, row)) for row in cur.fetchall()]
 
+    def spending_transactions(self, tenant_id: str, category: str, start: date, end: date) -> list[dict]:
+        """Underlying expense rows for a category over [start, end), matching spending_by_category rules."""
+        cur = self.c.execute(
+            "SELECT t.id, t.booked_on, t.account_id, a.label, t.amount, t.description, t.kind, t.category "
+            "FROM txn t JOIN account a ON a.id = t.account_id AND a.tenant_id = t.tenant_id "
+            "WHERE t.tenant_id = %s AND t.category = %s AND t.booked_on >= %s AND t.booked_on < %s "
+            "AND t.amount < 0 AND t.kind IN ('normal', 'fee') ORDER BY t.booked_on DESC, t.id DESC",
+            (tenant_id, category, start, end))
+        keys = ("id", "booked_on", "account_id", "account", "amount", "description", "kind", "category")
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+
     def _manual_fingerprint(self, tenant_id: str, account_id: int, booked_on: date,
                             amount: Decimal, description: str, source_ref: str) -> str:
         return hashlib.sha256(

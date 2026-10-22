@@ -49,6 +49,7 @@ ASSET_VERSION = hashlib.sha256(
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 TRANSACTION_KINDS = ("normal", "fee", "refund", "own_transfer")
 WEB_ENTRY_KINDS = ("normal", "fee", "refund")
+SPENDING_CATEGORIES = set(CATEGORIES) - {"income", "transfer", "refund"}
 PROVIDER_SUGGESTIONS = [
     ("bca", "BCA", "bank"), ("bri", "BRI", "bank"), ("bni", "BNI", "bank"),
     ("mandiri", "Mandiri", "bank"), ("btn", "BTN", "bank"), ("cimb", "CIMB Niaga", "bank"),
@@ -289,16 +290,40 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         return account, day, value, description.strip(), kind
 
     @app.get("/app/transactions", response_class=HTMLResponse)
-    def transactions(request: Request, notice: str | None = None):
+    def transactions(request: Request, notice: str | None = None, category: str | None = None,
+                     start: str | None = None, end: str | None = None):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             notices = {
                 "created": "Transaction added.", "updated": "Transaction updated.",
                 "deleted": "Transaction deleted.", "transfer_deleted": "Transfer and its paired row deleted.",
             }
+            filters = (category, start, end)
+            category_detail = any(value is not None for value in filters)
+            category_context = {}
+            transactions = []
+            if category_detail:
+                if category is None or start is None or end is None or category not in SPENDING_CATEGORIES:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                try:
+                    start_date = date.fromisoformat(start)
+                    end_date = date.fromisoformat(end)
+                except (TypeError, ValueError):
+                    raise Forbidden("Choose a valid spending category and reporting period.") from None
+                if start_date.isoformat() != start or end_date.isoformat() != end or start_date >= end_date:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                transactions = repo.spending_transactions(member["tenant_id"], category, start_date, end_date)
+                category_context = {
+                    "category_label": cat_label(category)[0],
+                    "category_period": f"{start_date.strftime('%-d %b %Y')} – {(end_date - timedelta(days=1)).strftime('%-d %b %Y')}",
+                    "category_total": sum((-row["amount"] for row in transactions), Decimal(0)),
+                }
+            else:
+                transactions = repo.transactions(member["tenant_id"])
             return render(request, "transactions.html", ident, member, page="transactions",
-                          transactions=repo.transactions(member["tenant_id"]), accounts=repo.accounts(member["tenant_id"]),
-                          kinds=WEB_ENTRY_KINDS, notice=notices.get(notice or ""))
+                          transactions=transactions, accounts=repo.accounts(member["tenant_id"]),
+                          kinds=WEB_ENTRY_KINDS, notice=notices.get(notice or ""),
+                          category_detail=category_detail, **category_context)
 
     @app.post("/app/transactions")
     def add_transaction(request: Request, csrf: str = Form(""), account_id: str = Form(""),

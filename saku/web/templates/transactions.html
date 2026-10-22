@@ -3,10 +3,14 @@
 {% block title %}Transactions · Saku{% endblock %}
 {% block content %}
 <header class="hello rise">
-  <div><h1>Manage transactions</h1><p class="lede">Add a transaction from the web, correct a detail, or remove a duplicate. Negative amounts are money out; positive amounts are money in.</p></div>
+  <div>
+    <h1>{% if category_detail %}{{ category_label }} spending{% else %}Manage transactions{% endif %}</h1>
+    <p class="lede">{% if category_detail %}Transactions for {{ category_period }} · Read-only category detail.{% else %}Add a transaction from the web, correct a detail, or remove a duplicate. Negative amounts are money out; positive amounts are money in.{% endif %}</p>
+  </div>
 </header>
 {% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
 
+{% if not category_detail %}
 <section class="card rise" id="add-transaction">
   <div class="card-head"><h2>Add transaction</h2><span class="hint">Use the same account names as the Dashboard</span></div>
   <form method="post" action="/app/transactions" class="grid-form transaction-form">
@@ -18,24 +22,29 @@
     <button type="submit">{{ icon('i-plus') }}Add transaction</button>
   </form>
 </section>
+{% endif %}
 
 <section class="panel rise d1">
-  <div class="card-head"><h2>All transactions</h2><span class="hint">{{ transactions|length }} shown</span></div>
+  <div class="card-head">
+    <h2>{% if category_detail %}{{ category_label }} spending{% else %}All transactions{% endif %}</h2>
+    <span class="hint">{% if category_detail %}{{ transactions|length }} payments · {{ category_total|rupiah }}{% else %}{{ transactions|length }} shown{% endif %}</span>
+  </div>
   {% if transactions %}
   <div class="transaction-list">
     <div class="transaction-table-head" aria-hidden="true">
-      <span>Date</span><span>Account</span><span>Description</span><span>Type</span><span class="num">Amount</span><span>Action</span>
+      <span>Date</span><span>Account</span><span>Description</span><span>Type</span><span class="num">Amount</span>{% if not category_detail %}<span>Action</span>{% endif %}
     </div>
   {% for t in transactions %}
-    <details class="transaction-row" data-txn-id="{{ t.id }}">
+    <details class="transaction-row" {% if category_detail %}open{% endif %} data-txn-id="{{ t.id }}">
       <summary class="transaction-summary">
         <time class="transaction-date" datetime="{{ t.booked_on }}">{{ t.booked_on.day }} {{ t.booked_on.strftime('%b %Y') }}</time>
         <span class="transaction-account">{{ t.account }}</span>
         <span class="transaction-description">{{ t.description|title }}</span>
         <span class="transaction-kind k-{{ t.kind }}">{{ t.kind|replace('_', ' ')|title }}</span>
         <strong class="transaction-amount {{ 'income' if t.amount > 0 else 'neg' }}">{{ t.amount|signed_rupiah }}</strong>
-        <span class="transaction-edit-label">Edit {{ icon('i-chevron') }}</span>
+        {% if not category_detail %}<span class="transaction-edit-label">Edit {{ icon('i-chevron') }}</span>{% endif %}
       </summary>
+      {% if not category_detail %}
       <div class="transaction-editor">
         <form method="post" action="/app/transactions/{{ t.id }}" class="transaction-edit">
           <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -50,9 +59,13 @@
           <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger">Delete transaction</button>
         </form>
       </div>
+      {% endif %}
     </details>
   {% endfor %}
   </div>
-  {% else %}<p class="lede">No transactions yet. Add the first one above or import a statement.</p>{% endif %}
+  {% else %}
+    {% if category_detail %}<p class="lede">No {{ category_label }} spending transactions for this period.</p>
+    {% else %}<p class="lede">No transactions yet. Add the first one above or import a statement.</p>{% endif %}
+  {% endif %}
 </section>
 {% endblock %}
