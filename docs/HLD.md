@@ -494,8 +494,10 @@ Stage 0f a wrong code 5 times kills the code; a used or expired code fails; the 
          address; no row holds a plain code or session token; a session cookie from a revoked or
          expired session gets the login page; /app/admin without the Access JWT gets 401 even with
          an admin session; a login form posted from another origin is refused
-Stage 0e export returns every row of the tenant and nothing of another; delete leaves 0 rows for the
-         tenant in every table and removes the Telegram link; the accepted policy version is stored
+Stage 0e export returns every row of the tenant and nothing of another, while excluding authentication
+         secrets; deletion leaves 0 rows in every tenant_id table, removes signup/auth/Telegram state,
+         refuses a shared tenant, requires exact confirmation and signs the user out; backup retention
+         is disclosed; the accepted policy version is stored
 Stage 1  import a real statement; rows_in = rows_new + rows_dup; re-import the same file
          -> 0 new rows; temp directory is empty afterwards
 Stage 2  correct the same merchant twice -> a learned rule appears; stop the scheduler

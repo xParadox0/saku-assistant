@@ -65,4 +65,23 @@
     </div>
   </div>
 </section>
+
+<section class="card rise d3">
+  <div class="card-head"><h2>Your data</h2><span class="hint">Export or delete this Saku workspace</span></div>
+  <p class="lede small">Download a JSON copy of your workspace data. Authentication codes and session credentials are not included.</p>
+  <p><a class="button quiet" href="/app/settings/export.json">{{ icon('i-file') }}Download my data</a></p>
+  <div class="danger-zone">
+    <h3>Delete all Saku data</h3>
+    <p class="lede small">This permanently removes the workspace data, Telegram link, sign-in sessions and codes. It cannot be undone. Deleted data may remain in server backups until the backup retention window expires.</p>
+    {% if data_delete_allowed %}
+    <form method="post" action="/app/settings/delete-data" class="grid-form delete-data-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field"><span>Type DELETE MY SAKU DATA to confirm</span><input name="confirmation" autocomplete="off" required></label>
+      <button type="submit" class="danger">Delete my data</button>
+    </form>
+    {% else %}
+    <p class="notice bad">{{ icon('i-alert') }}<span>This workspace has other members. Deletion is disabled to protect their data.</span></p>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

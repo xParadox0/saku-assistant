@@ -316,6 +316,67 @@ class Repo:
     def tenant_ids(self) -> list[str]:
         return [r[0] for r in self.c.execute("SELECT id FROM tenant ORDER BY id").fetchall()]
 
+    def export_tenant_data(self, tenant_id: str, email: str) -> dict | None:
+        """Return allowlisted product data for a member's tenant; never expose authentication secrets."""
+        email = email.strip().lower()
+        if self.c.execute("SELECT 1 FROM member WHERE email = %s AND tenant_id = %s", (email, tenant_id)).fetchone() is None:
+            return None
+        queries = {
+            "tenant": ("SELECT id, telegram_id, tz, created_at FROM tenant WHERE id = %s", (tenant_id,)),
+            "accounts": ("SELECT id, tenant_id, kind, provider, label, last4, currency, created_at FROM account WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "import_batches": ("SELECT id, tenant_id, account_id, source, file_sha256, parser, status, rows_in, rows_new, rows_dup, error, created_at FROM import_batch WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "transactions": ("SELECT id, tenant_id, account_id, batch_id, booked_on, amount, currency, description, kind, category, cat_source, cat_conf, fingerprint, transfer_pair, created_at FROM txn WHERE tenant_id = %s ORDER BY booked_on, id", (tenant_id,)),
+            "category_rules": ("SELECT id, tenant_id, pattern, category, origin, created_at FROM category_rule WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "budgets": ("SELECT tenant_id, month, category, amount FROM budget WHERE tenant_id = %s ORDER BY month, category", (tenant_id,)),
+            "goals": ("SELECT id, tenant_id, name, target, due_on, saved FROM goal WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "wishlist": ("SELECT id, tenant_id, item, amount, asked_at, remind_at, outcome FROM wishlist WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "nudges": ("SELECT id, tenant_id, kind, sent_at, body, sources, reaction FROM nudge WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "heartbeats": ("SELECT tenant_id, component, last_ok, last_error FROM heartbeat WHERE tenant_id = %s ORDER BY component", (tenant_id,)),
+            "members": ("SELECT email, tenant_id, role, created_at FROM member WHERE tenant_id = %s ORDER BY email", (tenant_id,)),
+            "telegram_links": ("SELECT telegram_user_id, email, tenant_id, linked_at FROM telegram_link WHERE tenant_id = %s ORDER BY telegram_user_id", (tenant_id,)),
+            "telegram_drafts": ("SELECT telegram_user_id, tenant_id, payload, expires_at, created_at FROM telegram_draft WHERE tenant_id = %s ORDER BY telegram_user_id", (tenant_id,)),
+            "signup": ("SELECT email, display_name, note, lang, consent_version, consent_at, status, decided_at, created_at FROM signup WHERE email = %s", (email,)),
+        }
+        result = {}
+        for name, (query, params) in queries.items():
+            cur = self.c.execute(query, params)
+            keys = [column.name for column in cur.description]
+            result[name] = [dict(zip(keys, row)) for row in cur.fetchall()]
+        return result
+
+    def can_delete_tenant_data(self, tenant_id: str, email: str) -> bool:
+        members = self.c.execute(
+            "SELECT email FROM member WHERE tenant_id = %s ORDER BY email", (tenant_id,)
+        ).fetchall()
+        return len(members) == 1 and members[0][0] == email.strip().lower()
+
+    def delete_tenant_data(self, tenant_id: str, email: str, email_hmac: str | None = None) -> bool:
+        """Delete a sole member's tenant and related auth state atomically; refuse shared tenants."""
+        email = email.strip().lower()
+        with self.c.transaction():
+            if self.c.execute("SELECT id FROM tenant WHERE id = %s FOR UPDATE", (tenant_id,)).fetchone() is None:
+                return False
+            members = self.c.execute(
+                "SELECT email FROM member WHERE tenant_id = %s ORDER BY email FOR UPDATE", (tenant_id,)
+            ).fetchall()
+            if len(members) != 1 or members[0][0] != email:
+                return False
+
+            self.c.execute("DELETE FROM signup WHERE email = %s", (email,))
+            self.c.execute("DELETE FROM link_code WHERE email = %s", (email,))
+            self.c.execute("DELETE FROM login_code WHERE email = %s", (email,))
+            self.c.execute("DELETE FROM web_session WHERE email = %s", (email,))
+            if email_hmac:
+                self.c.execute("DELETE FROM login_event WHERE email_hmac = %s", (email_hmac,))
+            self.c.execute("DELETE FROM telegram_draft WHERE tenant_id = %s", (tenant_id,))
+            self.c.execute("DELETE FROM telegram_link WHERE tenant_id = %s", (tenant_id,))
+            self.c.execute("UPDATE txn SET transfer_pair = NULL WHERE tenant_id = %s", (tenant_id,))
+            self.c.execute("DELETE FROM txn WHERE tenant_id = %s", (tenant_id,))
+            for table in ("import_batch", "category_rule", "budget", "goal", "wishlist", "nudge", "heartbeat", "account"):
+                self.c.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tenant_id,))
+            self.c.execute("DELETE FROM member WHERE tenant_id = %s", (tenant_id,))
+            return self.c.execute("DELETE FROM tenant WHERE id = %s", (tenant_id,)).rowcount == 1
+
     # ---- account management -----------------------------------------------------------------------
     def rename_account(self, tenant_id: str, account_id: int, label: str) -> bool:
         label = label.strip()

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import jwt
 import psycopg
+from psycopg import sql
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
@@ -506,3 +507,95 @@ def test_cached_keys_survive_a_failed_refresh(keypair):
     auth._fetched_at -= 7200  # force a refresh that fails
     assert auth.identify({"cf-access-jwt-assertion": token(priv)}).email == "alice@example.com"
     assert calls["n"] == 2
+
+
+def _seed_data_rights_rows(conn):
+    conn.execute("INSERT INTO category_rule (tenant_id, pattern, category, origin) VALUES ('alice', 'taxi', 'transport', 'user'), ('bob', 'private', 'shopping', 'user')")
+    conn.execute("INSERT INTO budget (tenant_id, month, category, amount) VALUES ('alice', '2026-09-01', 'transport', 100000), ('bob', '2026-09-01', 'shopping', 200000)")
+    conn.execute("INSERT INTO goal (tenant_id, name, target, due_on, saved) VALUES ('alice', 'Emergency reserve', 5000000, NULL, 250000)")
+    conn.execute("INSERT INTO wishlist (tenant_id, item, amount, remind_at) VALUES ('alice', 'Bike repair', 300000, now() + interval '48 hours')")
+    conn.execute("INSERT INTO nudge (tenant_id, kind, body, sources) VALUES ('alice', 'review', 'Alice insight', '{\"origin\":\"test\"}'::jsonb)")
+    conn.execute("INSERT INTO heartbeat (tenant_id, component, last_ok) VALUES ('alice', 'scheduler', now())")
+    conn.execute("INSERT INTO telegram_link (telegram_user_id, email, tenant_id) VALUES (10101, 'alice@example.com', 'alice'), (20202, 'bob@example.com', 'bob')")
+    conn.execute("INSERT INTO telegram_draft (telegram_user_id, tenant_id, payload, expires_at) VALUES (10101, 'alice', '{\"amount\":100}'::jsonb, now() + interval '10 minutes')")
+    conn.execute("INSERT INTO signup (email, display_name, note, lang, consent_version, consent_at, status) VALUES ('alice@example.com', 'Alice', 'Synthetic request', 'en', 'test-v1', now(), 'approved')")
+    conn.execute("INSERT INTO link_code (code_hash, email, expires_at) VALUES (%s, 'alice@example.com', now() + interval '10 minutes')", ("a" * 64,))
+    conn.execute("INSERT INTO login_code (email, code_hmac, salt, expires_at) VALUES ('alice@example.com', 'synthetic-hmac', 'synthetic-salt', now() + interval '10 minutes')")
+    conn.execute("INSERT INTO web_session (sid_sha256, email, expires_at) VALUES (%s, 'alice@example.com', now() + interval '1 day')", ("b" * 64,))
+
+
+def test_settings_offers_export_and_delete_with_backup_boundary(client):
+    page = client.get("/app/settings", headers=as_("alice@example.com")).text
+    assert 'href="/app/settings/export.json"' in page
+    assert 'action="/app/settings/delete-data"' in page
+    assert "DELETE MY SAKU DATA" in page
+    assert "server backups" in page
+
+
+def test_data_export_contains_tenant_data_and_excludes_other_tenants_and_auth_secrets(client, conn):
+    _seed_data_rights_rows(conn)
+    response = client.get("/app/settings/export.json", headers=as_("alice@example.com"))
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    exported = response.json()
+    data = exported["data"]
+    assert exported["tenant_id"] == "alice"
+    assert data["tenant"][0]["id"] == "alice"
+    assert data["accounts"][0]["label"] == "Alice Main"
+    assert any(row["description"] == "ALICE LUNCH" for row in data["transactions"])
+    assert data["category_rules"][0]["pattern"] == "taxi"
+    assert data["budgets"][0]["category"] == "transport"
+    assert data["goals"][0]["name"] == "Emergency reserve"
+    assert data["wishlist"][0]["item"] == "Bike repair"
+    assert data["nudges"][0]["body"] == "Alice insight"
+    assert data["telegram_links"][0]["telegram_user_id"] == 10101
+    assert data["telegram_drafts"][0]["payload"] == {"amount": 100}
+    assert data["signup"][0]["display_name"] == "Alice"
+    assert "BOB PRIVATE PURCHASE" not in response.text and "Bob Secret Account" not in response.text
+    assert not {"login_codes", "link_codes", "web_sessions"} & data.keys()
+    assert "synthetic-hmac" not in response.text and "synthetic-salt" not in response.text
+    assert ("b" * 64) not in response.text and ("a" * 64) not in response.text
+
+
+def test_data_delete_requires_csrf_and_exact_confirmation_without_mutation(client, conn):
+    _seed_data_rights_rows(conn)
+    wrong_csrf = client.post("/app/settings/delete-data", data={"confirmation": "DELETE MY SAKU DATA"},
+                             headers=as_("alice@example.com"))
+    assert wrong_csrf.status_code == 403
+    wrong_phrase = client.post("/app/settings/delete-data", data={
+        "csrf": csrf(client, "alice@example.com"), "confirmation": "DELETE",
+    }, headers=as_("alice@example.com"))
+    assert wrong_phrase.status_code == 403
+    assert conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'alice'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM tenant WHERE id = 'alice'").fetchone()[0] == 1
+
+
+def test_data_delete_removes_only_requesting_tenants_rows_and_signs_out(client, conn):
+    _seed_data_rights_rows(conn)
+    response = client.post("/app/settings/delete-data", data={
+        "csrf": csrf(client, "alice@example.com"), "confirmation": "DELETE MY SAKU DATA",
+    }, headers=as_("alice@example.com"), follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    assert "saku_session" in response.headers.get("set-cookie", "")
+    tenant_tables = conn.execute(
+        "SELECT DISTINCT table_name FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND column_name = 'tenant_id' ORDER BY table_name"
+    ).fetchall()
+    for (table,) in tenant_tables:
+        query = sql.SQL("SELECT COUNT(*) FROM {} WHERE tenant_id = %s").format(sql.Identifier(table))
+        assert conn.execute(query, ("alice",)).fetchone()[0] == 0, table
+    assert conn.execute("SELECT COUNT(*) FROM tenant WHERE id = 'alice'").fetchone()[0] == 0
+    for table in ("signup", "link_code", "login_code", "web_session"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE email = 'alice@example.com'").fetchone()[0] == 0, table
+    assert conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'bob'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM txn WHERE tenant_id = 'bob'").fetchone()[0] == 1
+
+
+def test_data_delete_refuses_shared_tenant(client, seeded, conn):
+    _seed_data_rights_rows(conn)
+    conn.execute("INSERT INTO member (email, tenant_id, role) VALUES ('carol@example.com', 'alice', 'user')")
+    response = client.post("/app/settings/delete-data", data={
+        "csrf": csrf(client, "alice@example.com"), "confirmation": "DELETE MY SAKU DATA",
+    }, headers=as_("alice@example.com"))
+    assert response.status_code == 403
+    assert conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'alice'").fetchone()[0] == 1
