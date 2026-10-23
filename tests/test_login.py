@@ -80,6 +80,24 @@ def test_member_signs_in_with_a_code(world, db_url, tmp_path):
     assert cookie and len(cookie) >= 40
 
 
+def test_verify_code_rejects_membership_reassignment_before_redeem(world, db_url, tmp_path, conn, monkeypatch):
+    repo = world
+    login = Login(SECRET.encode(), OutboxMailer())
+    email, code, salt = "user@example.com", "123456", "fixed-salt"
+    assert repo.login_code_new(email, login._h("code", salt, email, code), salt, 600,
+                               expected_tenant="u1")
+    redeem = repo.redeem_code_session
+
+    def move_then_redeem(*args, **kwargs):
+        conn.execute("UPDATE member SET tenant_id = 'owner' WHERE email = %s", (email,))
+        return redeem(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "redeem_code_session", move_then_redeem)
+    token = login.verify_code(repo, email, code, "198.51.100.7")
+    assert token is None
+    assert conn.execute("SELECT COUNT(*) FROM web_session WHERE email = %s", (email,)).fetchone()[0] == 0
+
+
 def test_root_redirects_a_live_member_session_to_latest_safe_app_page(world, db_url, tmp_path, conn):
     c, mailer = make(db_url, tmp_path)
     sign_in(c, mailer, "user@example.com")

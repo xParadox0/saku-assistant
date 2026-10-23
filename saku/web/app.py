@@ -313,7 +313,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             category_context = {}
             transactions = []
             if category_detail:
-                if category is None or start is None or end is None or category not in SPENDING_CATEGORIES:
+                if category is None or start is None or end is None or not category or len(category) > 80:
                     raise Forbidden("Choose a valid spending category and reporting period.")
                 try:
                     start_date = date.fromisoformat(start)
@@ -321,6 +321,10 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                 except (TypeError, ValueError):
                     raise Forbidden("Choose a valid spending category and reporting period.") from None
                 if start_date.isoformat() != start or end_date.isoformat() != end or start_date >= end_date:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                if category not in SPENDING_CATEGORIES and category not in {
+                    row["category"] for row in repo.spending_by_category(member["tenant_id"], start_date, end_date)
+                }:
                     raise Forbidden("Choose a valid spending category and reporting period.")
                 transactions = repo.spending_transactions(member["tenant_id"], category, start_date, end_date)
                 category_context = {
@@ -684,7 +688,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         if addr is None:
             return RedirectResponse("/login", status_code=303)
         with repo_ctx() as repo:
-            token = login.verify_code(repo, addr, code, client_ip(request))
+            token = login.verify_code(repo, addr, code, client_ip(request), allow_registration=beta.registration_open)
         if token is None:
             return login_page(request, "code", status_code=400, error="code", email=addr, next=safe_next(next))
         resp = RedirectResponse(safe_next(next), status_code=303)

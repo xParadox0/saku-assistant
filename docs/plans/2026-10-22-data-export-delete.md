@@ -2,7 +2,7 @@
 
 **Goal:** Let an authenticated member download their tenant's non-secret data and permanently delete the tenant's stored data with explicit confirmation.
 
-**Architecture:** Put tenant-filtered reads and transactional deletion in `Repo`. Export a JSON document covering tenant-owned product data plus the current member's beta consent record, while explicitly excluding authentication secrets and short-lived security events. Deletion requires CSRF and an exact confirmation phrase, refuses a shared tenant, removes dependent rows in FK-safe order, revokes sessions/codes, and signs the requester out. The UI states that retained backups expire according to the existing policy.
+**Architecture:** Put tenant-filtered reads and transactional deletion in `Repo`. Export a JSON document covering tenant-owned product data, non-secret sign-in session timestamps/path, and the current member's beta consent record. Exclude session IDs/hashes, authentication codes, short-lived login security events, and `signup.decided_by` (another person's staff identity). The export uses one repeatable-read snapshot and holds tenant/member locks to serialize with deletion and reassignment. Deletion requires CSRF and an exact confirmation phrase, refuses a shared tenant, removes dependent rows in FK-safe order, revokes sessions/codes, and signs the requester out. The UI states that retained backups expire according to the configured backup retention.
 
 **Tech Stack:** FastAPI, Jinja2, PostgreSQL/psycopg, Python stdlib JSON, pytest.
 

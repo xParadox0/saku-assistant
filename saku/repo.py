@@ -148,7 +148,7 @@ class Repo:
         cur = self.c.execute(
             "SELECT t.id, t.booked_on, t.account_id, a.label, t.amount, t.description, t.kind, t.category "
             "FROM txn t JOIN account a ON a.id = t.account_id AND a.tenant_id = t.tenant_id "
-            "WHERE t.tenant_id = %s AND t.category = %s AND t.booked_on >= %s AND t.booked_on < %s "
+            "WHERE t.tenant_id = %s AND COALESCE(t.category, 'other') = %s AND t.booked_on >= %s AND t.booked_on < %s "
             "AND t.amount < 0 AND t.kind IN ('normal', 'fee') ORDER BY t.booked_on DESC, t.id DESC",
             (tenant_id, category, start, end))
         keys = ("id", "booked_on", "account_id", "account", "amount", "description", "kind", "category")
@@ -317,10 +317,21 @@ class Repo:
         return [r[0] for r in self.c.execute("SELECT id FROM tenant ORDER BY id").fetchall()]
 
     def export_tenant_data(self, tenant_id: str, email: str) -> dict | None:
-        """Return allowlisted product data for a member's tenant; never expose authentication secrets."""
+        """Export one consistent, authorized tenant snapshot; never include auth secrets."""
         email = email.strip().lower()
-        if self.c.execute("SELECT 1 FROM member WHERE email = %s AND tenant_id = %s", (email, tenant_id)).fetchone() is None:
-            return None
+        with self.c.transaction():
+            self.c.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            # Lock in the same order as deletion. A concurrent reassignment of
+            # membership also waits until the export finishes.
+            if self.c.execute("SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (tenant_id,)).fetchone() is None:
+                return None
+            if self.c.execute(
+                "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR UPDATE", (email, tenant_id)
+            ).fetchone() is None:
+                return None
+            return self._export_tenant_data_locked(tenant_id, email)
+
+    def _export_tenant_data_locked(self, tenant_id: str, email: str) -> dict:
         queries = {
             "tenant": ("SELECT id, telegram_id, tz, created_at FROM tenant WHERE id = %s", (tenant_id,)),
             "accounts": ("SELECT id, tenant_id, kind, provider, label, last4, currency, created_at FROM account WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
@@ -336,6 +347,7 @@ class Repo:
             "telegram_links": ("SELECT telegram_user_id, email, tenant_id, linked_at FROM telegram_link WHERE tenant_id = %s ORDER BY telegram_user_id", (tenant_id,)),
             "telegram_drafts": ("SELECT telegram_user_id, tenant_id, payload, expires_at, created_at FROM telegram_draft WHERE tenant_id = %s ORDER BY telegram_user_id", (tenant_id,)),
             "signup": ("SELECT email, display_name, note, lang, consent_version, consent_at, status, decided_at, created_at FROM signup WHERE email = %s", (email,)),
+            "web_sessions": ("SELECT email, created_at, last_seen, last_path, expires_at, revoked_at FROM web_session WHERE email = %s ORDER BY created_at", (email,)),
         }
         result = {}
         for name, (query, params) in queries.items():
@@ -703,17 +715,22 @@ class Repo:
         return [dict(zip(keys, r)) for r in cur.fetchall()]
 
     def beat(self, tenant_id: str, component: str, error: str | None = None) -> None:
-        """Record that a component is alive (error None) or that its last run failed."""
-        if error is None:
-            self.c.execute(
-                "INSERT INTO heartbeat (tenant_id, component, last_ok) VALUES (%s, %s, now()) "
-                "ON CONFLICT (tenant_id, component) DO UPDATE SET last_ok = now(), last_error = NULL",
-                (tenant_id, component))
-        else:
-            self.c.execute(
-                "INSERT INTO heartbeat (tenant_id, component, last_error) VALUES (%s, %s, %s) "
-                "ON CONFLICT (tenant_id, component) DO UPDATE SET last_error = EXCLUDED.last_error",
-                (tenant_id, component, error[:300]))
+        """Record a heartbeat only while its tenant exists (except the system heartbeat)."""
+        with self.c.transaction():
+            if tenant_id != "_system" and self.c.execute(
+                "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (tenant_id,)
+            ).fetchone() is None:
+                return
+            if error is None:
+                self.c.execute(
+                    "INSERT INTO heartbeat (tenant_id, component, last_ok) VALUES (%s, %s, now()) "
+                    "ON CONFLICT (tenant_id, component) DO UPDATE SET last_ok = now(), last_error = NULL",
+                    (tenant_id, component))
+            else:
+                self.c.execute(
+                    "INSERT INTO heartbeat (tenant_id, component, last_error) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (tenant_id, component) DO UPDATE SET last_error = EXCLUDED.last_error",
+                    (tenant_id, component, error[:300]))
 
     def admin_heartbeats(self) -> list[dict]:
         cur = self.c.execute(
@@ -739,18 +756,49 @@ class Repo:
             "WHERE kind = %s AND at > now() - make_interval(secs => %s)", (email_hmac, ip_hmac, kind, window_s)).fetchone()
         return int(row[0]), int(row[1])
 
-    def login_event_add(self, kind: str, email_hmac: str, ip_hmac: str) -> None:
-        self.c.execute("INSERT INTO login_event (kind, email_hmac, ip_hmac) VALUES (%s, %s, %s)", (kind, email_hmac, ip_hmac))
-        self.c.execute("DELETE FROM login_event WHERE at < now() - interval '24 hours'")
+    def login_event_add(self, kind: str, email_hmac: str, ip_hmac: str,
+                        *, email: str | None = None, expected_tenant: str | None = None) -> bool:
+        with self.c.transaction():
+            if expected_tenant is not None:
+                email = (email or "").strip().lower()
+                if not email or self.c.execute(
+                    "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (expected_tenant,)
+                ).fetchone() is None or self.c.execute(
+                    "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR SHARE",
+                    (email, expected_tenant),
+                ).fetchone() is None:
+                    return False
+            self.c.execute("INSERT INTO login_event (kind, email_hmac, ip_hmac) VALUES (%s, %s, %s)",
+                           (kind, email_hmac, ip_hmac))
+            self.c.execute("DELETE FROM login_event WHERE at < now() - interval '24 hours'")
+            return True
 
-    def login_code_new(self, email: str, code_hmac: str, salt: str, ttl_s: int) -> None:
-        """A new code cancels every older unused code for the address."""
+    def login_code_new(self, email: str, code_hmac: str, salt: str, ttl_s: int,
+                       *, registration_open: bool = False, expected_tenant: str | None = None,
+                       expected_signup: bool = False) -> bool:
+        """Issue a code only while the identity observed at request time still exists."""
         email = email.strip().lower()
         with self.c.transaction():
+            if expected_tenant is not None:
+                # Take the tenant lock before touching login_code, matching deletion order.
+                tenant = self.c.execute(
+                    "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (expected_tenant,)
+                ).fetchone()
+                if tenant is None or self.c.execute(
+                    "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR SHARE",
+                    (email, expected_tenant),
+                ).fetchone() is None:
+                    return False
+            elif expected_signup:
+                if self.c.execute("SELECT 1 FROM signup WHERE email = %s FOR SHARE", (email,)).fetchone() is None:
+                    return False
+            elif not registration_open:
+                return False
             self.c.execute("UPDATE login_code SET used_at = now() WHERE email = %s AND used_at IS NULL", (email,))
             self.c.execute("INSERT INTO login_code (email, code_hmac, salt, expires_at) "
                            "VALUES (%s, %s, %s, now() + make_interval(secs => %s))", (email, code_hmac, salt, ttl_s))
             self.c.execute("DELETE FROM login_code WHERE created_at < now() - interval '2 days'")
+            return True
 
     def login_code_live(self, email: str) -> dict | None:
         """The one code that may still be redeemed: unused, unexpired, fewer than the allowed wrong tries."""
@@ -776,10 +824,64 @@ class Repo:
                               "OR EXISTS (SELECT 1 FROM signup WHERE email = %s)",
                               (email, email)).fetchone()[0]
 
-    def session_new(self, sid_sha256: str, email: str, ttl_s: int) -> None:
-        self.c.execute("INSERT INTO web_session (sid_sha256, email, expires_at) "
-                       "VALUES (%s, %s, now() + make_interval(secs => %s))", (sid_sha256, email.strip().lower(), ttl_s))
-        self.c.execute("DELETE FROM web_session WHERE expires_at < now() - interval '7 days'")
+    def redeem_code_session(self, code_id: int, sid_sha256: str, email: str, ttl_s: int,
+                            *, allow_unregistered: bool = False,
+                            expected_tenant: str | None = None) -> bool:
+        """Atomically redeem a verified code only for the membership snapshot validated by Login."""
+        email = email.strip().lower()
+        with self.c.transaction():
+            if expected_tenant is not None:
+                if self.c.execute(
+                    "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (expected_tenant,)
+                ).fetchone() is None or self.c.execute(
+                    "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR SHARE",
+                    (email, expected_tenant),
+                ).fetchone() is None:
+                    return False
+            else:
+                member = self.c.execute("SELECT tenant_id FROM member WHERE email = %s", (email,)).fetchone()
+                if member is not None and self.c.execute(
+                    "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (member[0],)
+                ).fetchone() is None:
+                    return False
+            if not self.login_code_use(code_id):
+                return False
+            return self.session_new(sid_sha256, email, ttl_s, allow_unregistered=allow_unregistered,
+                                    expected_tenant=expected_tenant)
+
+    def session_new(self, sid_sha256: str, email: str, ttl_s: int, *, allow_unregistered: bool = False,
+                    expected_tenant: str | None = None) -> bool:
+        email = email.strip().lower()
+        with self.c.transaction():
+            if expected_tenant is not None:
+                if self.c.execute(
+                    "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (expected_tenant,)
+                ).fetchone() is None or self.c.execute(
+                    "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR SHARE",
+                    (email, expected_tenant),
+                ).fetchone() is None:
+                    return False
+            else:
+                tenant_row = self.c.execute("SELECT tenant_id FROM member WHERE email = %s", (email,)).fetchone()
+                if tenant_row is not None:
+                    # Match delete_tenant_data's first lock; no writer can slip between
+                    # session cleanup and the final member deletion.
+                    tenant = self.c.execute(
+                        "SELECT 1 FROM tenant WHERE id = %s FOR KEY SHARE", (tenant_row[0],)
+                    ).fetchone()
+                    if tenant is None or self.c.execute(
+                        "SELECT 1 FROM member WHERE email = %s AND tenant_id = %s FOR SHARE",
+                        (email, tenant_row[0]),
+                    ).fetchone() is None:
+                        return False
+                elif self.c.execute(
+                    "SELECT 1 FROM signup WHERE email = %s FOR SHARE", (email,)
+                ).fetchone() is None and not allow_unregistered:
+                    return False
+            self.c.execute("INSERT INTO web_session (sid_sha256, email, expires_at) "
+                           "VALUES (%s, %s, now() + make_interval(secs => %s))", (sid_sha256, email, ttl_s))
+            self.c.execute("DELETE FROM web_session WHERE expires_at < now() - interval '7 days'")
+            return True
 
     def session_email(self, sid_sha256: str, idle_s: int) -> str | None:
         """Email of a live session, sliding last_seen. Expired, idle or revoked sessions return None."""
