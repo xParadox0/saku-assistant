@@ -84,8 +84,8 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 - **F8 Purchase check.** User asks before buying. Answer cites budget, balance and history, offers a wishlist hold, and follows up after 48 hours.
 - **F9 Recurring and fee detection.** Subscriptions, admin fees and transfer fees, with monthly cost.
 - **F10 Weekly and monthly review** delivered on Telegram.
-- **F11 Data export and delete.** User can export everything and delete everything (UU PDP rights).
-- **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Login with an email code on Saku's own sign-in page (no password).
+- **F11 Data export and delete.** A member can download all product data for their tenant as JSON and delete the entire tenant only after an exact confirmation. Authentication secrets are never exported; deletion also removes linked Telegram and sign-in state. A shared tenant cannot be deleted by one member, and the UI explains the existing backup-retention boundary (UU PDP rights).
+- **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Each displayed spending category opens a read-only list of the transactions that make up its total for the exact same reporting period and inclusion rules. Login with an email code on Saku's own sign-in page (no password).
 - **F22 Ops page for the admin.** Per-tenant counts, last import, failed imports, component heartbeats. Never shows another tenant's transactions, descriptions, amounts or account names.
 - **F24 Public landing and demo.** A public front page and a read-only demo on synthetic data. No login. No real data, no forms that write.
 - **F25 Self-registration with consent.** A visitor proves an email address (a 6-digit code sent by email), fills a short form and accepts the privacy policy and terms. The result is a pending request, not an account.

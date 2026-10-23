@@ -101,11 +101,14 @@
           <div class="donut-mid"><span class="k">Spent</span><b>{{ cf.spending|rupiah_short }}</b></div>
         </div>
         <ul class="legend-list">
-          {% for s in donut[:6] %}
+          {% for s in donut %}
           <li>
-            <span class="chip {{ s.colour }}">{{ icon(s.icon) }}</span>
-            <span class="lg-name">{{ s.name }}<small>{{ s.count }} payments</small></span>
-            <span class="lg-val">{{ s.amount|rupiah_short }}<small>{{ s.pct }}%</small></span>
+            <a class="spending-category-link" href="/app/transactions?category={{ s.key }}&amp;start={{ cf.start }}&amp;end={{ cf.end }}"
+               aria-label="View {{ s.name }} spending details for {{ cf.start.strftime('%B %Y') }}">
+              <span class="chip {{ s.colour }}">{{ icon(s.icon) }}</span>
+              <span class="lg-name">{{ s.name }}<small>{{ s.count }} payments</small></span>
+              <span class="lg-val">{{ s.amount|rupiah_short }}<small>{{ s.pct }}%</small></span>
+            </a>
           </li>
           {% endfor %}
         </ul>

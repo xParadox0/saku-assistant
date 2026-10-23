@@ -157,6 +157,11 @@ h3 { font: 600 15px/1.3 var(--text); margin: 0 0 4px; }
 .legend-list li, .acct-list li, .tx-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center;
   padding: 9px 10px; border-radius: var(--r-md); transition: background .25s var(--ease); }
 .legend-list li:hover, .acct-list li:hover, .tx-list li:hover { background: var(--bg); }
+.legend-list li { display: block; padding: 0; }
+.spending-category-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 9px 10px; border-radius: var(--r-md); color: inherit; text-decoration: none; transition: background .25s var(--ease); }
+.spending-category-link:hover { background: var(--bg); }
+.spending-category-link:focus-visible { outline: 3px solid var(--mint); outline-offset: 2px; }
 .lg-name, .tx-main { min-width: 0; font-weight: 500; }
 .lg-name small, .lg-val small, .tx-main small, .tx-side small { display: block; color: var(--faint); font-size: 12.5px; font-weight: 400; }
 .tx-main b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -426,6 +431,7 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
   .who b { font-size: 13px; }
   main { padding: 24px 16px 40px; }
   .grid-form, .upload { grid-template-columns: minmax(0, 1fr); }
+  .delete-data-form { grid-template-columns: minmax(0, 1fr); }
   .grid-form .wide { grid-column: auto; }
   .account-form .account-kind, .account-form .provider-field, .account-form .last4-field,
   .account-form .name-field, .account-form .add-submit { grid-column: 1; grid-row: auto; }
@@ -472,6 +478,9 @@ footer.page-foot { margin-top: 40px; color: var(--faint); font-size: 13px; }
 .link-box b { color: var(--ink); }
 code { font-family: var(--text); background: var(--surface-2); color: var(--ink); padding: 2px 8px; border-radius: 6px; overflow-wrap: anywhere; }
 .actions-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
+.danger-zone { margin-top: 22px; padding: 18px; border: 1px solid var(--neg); border-radius: var(--r-md); background: var(--neg-soft); }
+.danger-zone h3 { color: var(--neg); }
+.delete-data-form { grid-template-columns: minmax(0, 1fr) auto; max-width: 620px; }
 .actions-row .notice { margin: 0; }
 ul.plain { margin: 8px 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
 

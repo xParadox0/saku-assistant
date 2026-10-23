@@ -75,19 +75,30 @@ class Login:
         by_email, by_ip = repo.login_events("request", et, it, HOUR)
         if by_email >= self.limits.requests_per_email or by_ip >= self.limits.requests_per_ip:
             return "limited"
-        repo.login_event_add("request", et, it)  # counted for every address, eligible or not
-        if not (registration_open or repo.may_sign_in(email)):
+        member = repo.member(email)
+        known_identity = member is not None or repo.may_sign_in(email)
+        repo.login_event_add("request", et, it, email=email,
+                             expected_tenant=member["tenant_id"] if member else None)
+        if not (registration_open or known_identity):
             return "silent"
         code = f"{secrets.randbelow(1_000_000):06d}"
         salt = secrets.token_hex(8)
-        repo.login_code_new(email, self._h("code", salt, email, code), salt, CODE_TTL_S)
+        created = repo.login_code_new(
+            email, self._h("code", salt, email, code), salt, CODE_TTL_S,
+            registration_open=registration_open,
+            expected_tenant=member["tenant_id"] if member else None,
+            expected_signup=known_identity and member is None,
+        )
+        if not created:
+            return "silent"
         self.mailer.send_code(email, code, lang)
         return "sent"
 
     # ---- step 2: redeem it ------------------------------------------------------------------------------
-    def verify_code(self, repo: Repo, email: str, code: str, ip: str) -> str | None:
+    def verify_code(self, repo: Repo, email: str, code: str, ip: str, *, allow_registration: bool = False) -> str | None:
         """Returns a new session token on success, else None. Wrong tries are counted per code, email and IP."""
         et, it = self.email_tag(email), self.ip_tag(ip)
+        member = repo.member(email)
         fails_email, fails_ip = repo.login_events("fail", et, it, HOUR)
         if fails_email >= self.limits.fails_per_email or fails_ip >= self.limits.fails_per_ip:
             return None
@@ -96,14 +107,16 @@ class Login:
         ok = (live is not None and len(code) == 6
               and hmac.compare_digest(live["code_hmac"], self._h("code", live["salt"], email, code)))
         if live is None or not ok:
-            repo.login_event_add("fail", et, it)
+            repo.login_event_add("fail", et, it, email=email,
+                                 expected_tenant=member["tenant_id"] if member else None)
             if live is not None:
                 repo.login_code_fail(live["id"], MAX_CODE_ATTEMPTS)
             return None
-        if not repo.login_code_use(live["id"]):  # lost a race with a parallel request
-            return None
         token = secrets.token_urlsafe(32)
-        repo.session_new(self.token_hash(token), email, SESSION_TTL_S)
+        if not repo.redeem_code_session(live["id"], self.token_hash(token), email, SESSION_TTL_S,
+                                        allow_unregistered=allow_registration,
+                                        expected_tenant=member["tenant_id"] if member else None):
+            return None
         return token
 
     def session_email(self, repo: Repo, token: str | None) -> str | None:

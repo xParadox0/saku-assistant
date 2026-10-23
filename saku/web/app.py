@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -49,6 +50,7 @@ ASSET_VERSION = hashlib.sha256(
 PROVIDER_RE = re.compile(r"^[a-z0-9_]{2,30}$")
 TRANSACTION_KINDS = ("normal", "fee", "refund", "own_transfer")
 WEB_ENTRY_KINDS = ("normal", "fee", "refund")
+SPENDING_CATEGORIES = set(CATEGORIES) - {"income", "transfer", "refund"}
 PROVIDER_SUGGESTIONS = [
     ("bca", "BCA", "bank"), ("bri", "BRI", "bank"), ("bni", "BNI", "bank"),
     ("mandiri", "Mandiri", "bank"), ("btn", "BTN", "bank"), ("cimb", "CIMB Niaga", "bank"),
@@ -63,6 +65,15 @@ PROVIDER_SUGGESTIONS = [
     ("other_ewallet", "Other e-wallet", "ewallet"),
 ]
 CSV_TEMPLATE = "date,amount,description,kind\n2026-07-01,15000000,SALARY,normal\n2026-07-02,-45000,LUNCH,normal\n2026-07-28,-15000,ADMIN FEE,fee\n"
+DATA_DELETE_CONFIRMATION = "DELETE MY SAKU DATA"
+
+
+def _json_export_default(value):
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"cannot export value of type {type(value).__name__}")
 
 
 class Forbidden(Exception):
@@ -289,16 +300,44 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         return account, day, value, description.strip(), kind
 
     @app.get("/app/transactions", response_class=HTMLResponse)
-    def transactions(request: Request, notice: str | None = None):
+    def transactions(request: Request, notice: str | None = None, category: str | None = None,
+                     start: str | None = None, end: str | None = None):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             notices = {
                 "created": "Transaction added.", "updated": "Transaction updated.",
                 "deleted": "Transaction deleted.", "transfer_deleted": "Transfer and its paired row deleted.",
             }
+            filters = (category, start, end)
+            category_detail = any(value is not None for value in filters)
+            category_context = {}
+            transactions = []
+            if category_detail:
+                if category is None or start is None or end is None or not category or len(category) > 80:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                try:
+                    start_date = date.fromisoformat(start)
+                    end_date = date.fromisoformat(end)
+                except (TypeError, ValueError):
+                    raise Forbidden("Choose a valid spending category and reporting period.") from None
+                if start_date.isoformat() != start or end_date.isoformat() != end or start_date >= end_date:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                if category not in SPENDING_CATEGORIES and category not in {
+                    row["category"] for row in repo.spending_by_category(member["tenant_id"], start_date, end_date)
+                }:
+                    raise Forbidden("Choose a valid spending category and reporting period.")
+                transactions = repo.spending_transactions(member["tenant_id"], category, start_date, end_date)
+                category_context = {
+                    "category_label": cat_label(category)[0],
+                    "category_period": f"{start_date.strftime('%-d %b %Y')} – {(end_date - timedelta(days=1)).strftime('%-d %b %Y')}",
+                    "category_total": sum((-row["amount"] for row in transactions), Decimal(0)),
+                }
+            else:
+                transactions = repo.transactions(member["tenant_id"])
             return render(request, "transactions.html", ident, member, page="transactions",
-                          transactions=repo.transactions(member["tenant_id"]), accounts=repo.accounts(member["tenant_id"]),
-                          kinds=WEB_ENTRY_KINDS, notice=notices.get(notice or ""))
+                          transactions=transactions, accounts=repo.accounts(member["tenant_id"]),
+                          kinds=WEB_ENTRY_KINDS, notice=notices.get(notice or ""),
+                          category_detail=category_detail, **category_context)
 
     @app.post("/app/transactions")
     def add_transaction(request: Request, csrf: str = Form(""), account_id: str = Form(""),
@@ -457,7 +496,47 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             notices = {"unlinked": "Telegram disconnected. The bot no longer reads messages from that account."}
             return render(request, "settings.html", ident, member, page="settings",
                           telegram=repo.telegram_status(ident.email), notice=notices.get(notice or ""),
+                          data_delete_allowed=repo.can_delete_tenant_data(member["tenant_id"], ident.email),
                           bot_username=bot_username, link=None)
+
+    @app.get("/app/settings/export.json")
+    def export_data(request: Request):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            data = repo.export_tenant_data(member["tenant_id"], ident.email)
+            if data is None:
+                raise NotFound("Account not found.")
+            payload = {
+                "export_version": 1,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "tenant_id": member["tenant_id"],
+                "data": data,
+                "not_included": [
+                    "Authentication codes, session hashes, and one-time link-code hashes are security credentials and are not exported.",
+                    "Short-lived sign-in security events are not exported.",
+                ],
+            }
+            content = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_export_default)
+        return Response(content, media_type="application/json", headers={
+            "Content-Disposition": 'attachment; filename="saku-data-export.json"',
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+        })
+
+    @app.post("/app/settings/delete-data")
+    def delete_data(request: Request, csrf: str = Form(""), confirmation: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            if confirmation != DATA_DELETE_CONFIRMATION:
+                raise Forbidden(f"Type {DATA_DELETE_CONFIRMATION} exactly to confirm deletion.")
+            email_hmac = login.email_tag(ident.email) if login is not None else None
+            deleted = repo.delete_tenant_data(member["tenant_id"], ident.email, email_hmac)
+            if not deleted:
+                raise Forbidden("This workspace has other members. Deletion is blocked to protect their data.")
+        response = RedirectResponse("/", status_code=303)
+        response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+        return response
 
     @app.post("/app/settings/telegram/code", response_class=HTMLResponse)
     def telegram_code(request: Request, csrf: str = Form("")):
@@ -471,6 +550,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                     "minutes": Repo.LINK_TTL_MINUTES}
             return render(request, "settings.html", ident, member, page="settings",
                           telegram=repo.telegram_status(ident.email), notice=None,
+                          data_delete_allowed=repo.can_delete_tenant_data(member["tenant_id"], ident.email),
                           bot_username=bot_username, link=link)
 
     @app.post("/app/settings/telegram/unlink")
@@ -608,7 +688,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         if addr is None:
             return RedirectResponse("/login", status_code=303)
         with repo_ctx() as repo:
-            token = login.verify_code(repo, addr, code, client_ip(request))
+            token = login.verify_code(repo, addr, code, client_ip(request), allow_registration=beta.registration_open)
         if token is None:
             return login_page(request, "code", status_code=400, error="code", email=addr, next=safe_next(next))
         resp = RedirectResponse(safe_next(next), status_code=303)

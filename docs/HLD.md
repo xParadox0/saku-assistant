@@ -256,6 +256,7 @@ Server-rendered pages (FastAPI + Jinja2), no JavaScript. The page Content-Securi
 ```text
 /              overview: latest month income, spending, surplus/deficit, trend, by account, recent rows
 /accounts      list, add, rename, delete (only when empty), upload a statement per account
+/transactions list, edit, delete; category and period filters from the dashboard are read-only and tenant-scoped
 /imports       every import batch, including failures and their error text
 /admin         ops view, admin role only: tenants, heartbeats, recent batches (metadata only)
 /healthz       liveness, no data
@@ -279,6 +280,8 @@ Since v0.2 the app lives under `/app` and the public pages under `/` (see 3.10).
 - Dev mode (fixed demo identity) refuses to start on a non-loopback address, except inside the demo container whose host port is bound to loopback.
 
 The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so any account can be imported before its bank-specific parser exists. Bank-specific PDF and CSV parsers are added in Stage 1.
+
+Dashboard category details query the same tenant, category, half-open period `[start, end)`, and negative `normal`/`fee` transaction rules as the category aggregate. The filtered view is read-only; invalid filters are rejected rather than falling back to the unfiltered transaction list.
 
 ### 3.10 Closed beta: public pages, registration, approval (F24 to F27)
 
@@ -491,8 +494,10 @@ Stage 0f a wrong code 5 times kills the code; a used or expired code fails; the 
          address; no row holds a plain code or session token; a session cookie from a revoked or
          expired session gets the login page; /app/admin without the Access JWT gets 401 even with
          an admin session; a login form posted from another origin is refused
-Stage 0e export returns every row of the tenant and nothing of another; delete leaves 0 rows for the
-         tenant in every table and removes the Telegram link; the accepted policy version is stored
+Stage 0e export returns every row of the tenant and nothing of another, while excluding authentication
+         secrets; deletion leaves 0 rows in every tenant_id table, removes signup/auth/Telegram state,
+         refuses a shared tenant, requires exact confirmation and signs the user out; backup retention
+         is disclosed; the accepted policy version is stored
 Stage 1  import a real statement; rows_in = rows_new + rows_dup; re-import the same file
          -> 0 new rows; temp directory is empty afterwards
 Stage 2  correct the same merchant twice -> a learned rule appears; stop the scheduler
