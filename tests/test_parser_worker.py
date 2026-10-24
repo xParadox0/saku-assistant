@@ -37,6 +37,47 @@ def test_worker_round_trip_returns_only_structured_parse_result(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == []
 
 
+def test_parser_service_handles_recursion_error_and_keeps_health_responding(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    import saku.parser_service as parser_service
+
+    real_json = parser_service.json
+
+    def loads(value, *args, **kwargs):
+        if b"trigger_recursion" in value:
+            raise RecursionError("synthetic parser recursion")
+        return real_json.loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(parser_service, "json", SimpleNamespace(loads=loads, dumps=real_json.dumps))
+
+    async def exchange(socket_path, payload):
+        reader, writer = await asyncio.open_unix_connection(socket_path)
+        writer.write(payload + bytes([10]))
+        await writer.drain()
+        response = await asyncio.wait_for(reader.readline(), timeout=2)
+        writer.close()
+        await writer.wait_closed()
+        return json.loads(response)
+
+    async def scenario():
+        socket_path = tmp_path / "parser.sock"
+        service = ParserService(socket_path, work_root=tmp_path)
+        await service.start()
+        try:
+            nested = b'{"op":"health","trigger_recursion":true}'
+            failed = await exchange(socket_path, nested)
+            healthy = await exchange(socket_path, b'{"op":"health"}')
+            return failed, healthy
+        finally:
+            await service.close()
+
+    failed, healthy = asyncio.run(scenario())
+    assert failed["error"] and "Nothing was imported" in failed["error"]
+    assert healthy == {"ok": True}
+
+
 def test_worker_rejects_excess_parse_without_queueing(tmp_path):
     started = threading.Event()
     release = threading.Event()
@@ -243,6 +284,18 @@ def test_parser_client_rejects_internal_transfer_kind_from_worker():
         "unsupported": False,
     })
     assert outcome.rows is None and outcome.error
+
+
+def test_parser_client_rejects_oversized_parser_name_on_error_response():
+    outcome = ParserClient._outcome({
+        "ok": True,
+        "parser": "p" * 100_000,
+        "rows": None,
+        "error": "synthetic parse failure",
+        "unsupported": False,
+    })
+    assert outcome.parser is None
+    assert outcome.error == "the statement parser returned an invalid response. Nothing was imported"
 
 
 def test_parser_client_handles_recursion_error_from_worker_response():

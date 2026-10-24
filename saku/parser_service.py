@@ -92,7 +92,7 @@ class ParserService:
                 finally:
                     shutil.rmtree(workdir, ignore_errors=True)
                 await self._send(writer, self._serialize(outcome))
-            except (asyncio.TimeoutError, asyncio.LimitOverrunError, UnicodeError, ValueError, TypeError, OSError):
+            except (asyncio.TimeoutError, asyncio.LimitOverrunError, UnicodeError, ValueError, TypeError, OSError, RecursionError):
                 await self._send(writer, self._failure())
         finally:
             if acquired:

@@ -24,7 +24,7 @@ from typing import Callable
 from urllib.parse import quote
 
 import psycopg
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from dataclasses import dataclass, field
 from fastapi.staticfiles import StaticFiles
@@ -90,12 +90,14 @@ class LoginRequired(Exception):
     """No live Saku session (own sign-in mode)."""
 
 
-class _ImportBodyTooLarge(Exception):
-    pass
+class _ImportBodyTooLarge(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=413, detail="Upload request is too large.")
 
 
-class _ImportBodyTimedOut(Exception):
-    pass
+class _ImportBodyTimedOut(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=408, detail="Upload timed out. Try again.")
 
 
 class ImportUploadMiddleware:

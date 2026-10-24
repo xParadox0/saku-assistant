@@ -152,9 +152,10 @@ class ParserClient:
         unsupported = response.get("unsupported") is True
         raw_rows = response.get("rows")
         if error is not None:
-            if not isinstance(error, str) or len(error) > 500 or raw_rows is not None:
+            if (not isinstance(error, str) or len(error) > 500 or raw_rows is not None
+                    or (parser is not None and (not isinstance(parser, str) or len(parser) > 80))):
                 return ParseOutcome(None, None, "the statement parser returned an invalid response. Nothing was imported")
-            return ParseOutcome(parser if isinstance(parser, str) else None, None, error, unsupported)
+            return ParseOutcome(parser, None, error, unsupported)
         if unsupported:
             return ParseOutcome(None, None, None, unsupported=True)
         if not isinstance(parser, str) or not parser or len(parser) > 80 or not isinstance(raw_rows, list):
