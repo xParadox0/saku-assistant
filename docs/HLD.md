@@ -274,12 +274,22 @@ Since v0.2 the app lives under `/app` and the public pages under `/` (see 3.10).
 - On `/app/admin`, the Access identity comes only from the `Cf-Access-Jwt-Assertion` JWT. The dashboard verifies its RS256 signature against the team's published keys, plus `aud`, `iss` and `exp`. The unsigned `Cf-Access-Authenticated-User-Email` header is ignored, and a test checks that it alone gets a 401.
 - The verified email is looked up in the `member` table, which maps it to one tenant and a role (`user` or `admin`). A signed-in email that is not a member sees only the registration flow. Sign-in proves the address; `member` decides what it sees.
 - Every POST carries an HMAC token bound to the user's email. A token from another user is rejected.
-- Uploads: 5 MB limit, written to a private temp directory, parsed, then the directory is deleted. Only the SHA-256 of the file is stored. A failed parse is recorded as a failed batch with a message that never contains row contents.
+- Uploads: 5 MiB per file and a 5 MiB + 64 KiB multipart-body cap; the import body deadline is 30 seconds. The web process admits one import request at a time with no wait queue and caps each authenticated tenant at five admitted upload attempts per ten minutes; excess requests receive 429 before multipart parsing. Only SHA-256, selected account, source and parser version are recorded—never the original file or filename.
+- Parsing runs in a separate Compose service over a private Unix-socket volume. The parser container has `network_mode: none`, no database/application credentials, a read-only root filesystem, no Linux capabilities, `no-new-privileges`, 32 PID limit, 1 GiB memory limit, one CPU and a 64 MiB `/tmp`. It admits one parse at a time (socket backlog 2; busy requests fail closed). Its per-upload subprocess also has allowlisted environment, 768 MiB address-space and 20 CPU-second limits, 30-second wall timeout, 7 MiB captured-stdout cap, page/text/row bounds, and discarded stderr; transaction amounts are checked against `NUMERIC(18,2)` before persistence. Temporary files are deleted after each request.
+- After parsing, the web app re-authenticates the request and the repository locks tenant, member and selected account in that order, rechecks membership/provider/last4, then writes the batch, rows, transfer pairing and categories in one transaction. A failed or unsupported parse creates no ledger rows; account or membership changes during parsing produce 403 and no batch. Unsupported filename suffixes are rejected with 415 rather than mislabeled as CSV.
 - The admin page uses separate repository methods that return counts, statuses and timestamps only. A test asserts that descriptions, amounts and account labels of other tenants never appear on it.
 - An empty heartbeat list is shown as a warning. Nothing reporting is not the same as everything fine (principle 3).
 - Dev mode (fixed demo identity) refuses to start on a non-loopback address, except inside the demo container whose host port is bound to loopback.
 
-The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so any account can be imported before its bank-specific parser exists. Bank-specific PDF and CSV parsers are added in Stage 1.
+The first parser is Saku's own CSV format (`date,amount,description[,kind]`), so any account can be imported before its bank-specific parser exists.
+
+The first bank parser is `bca-pdf/1` (`saku/parsers/bca_pdf.py`) for the monthly BCA e-statement PDF:
+- BCA encrypts the file with an empty user password, so it opens without asking the user anything. A PDF that needs a real password is rejected with instructions to save an unlocked copy. Saku never asks for or stores a statement password.
+- Rows are read by column position. A row starts with a `DD/MM` date; following lines belong to it. MUTASI is debit when followed by `DB`. The repeated amount on the first continuation line is dropped.
+- The whole file is rejected, and nothing is imported, unless every printed SALDO equals the running balance and the summary block (opening balance, CR/DB totals and counts, closing balance) agrees with the rows.
+- The statement must be uploaded to an account with provider `bca`; the account's last 4 digits must be saved and must match the statement. An absent or unreadable identifier is rejected before any rows are imported.
+- `BIAYA ...` and `PAJAK ...` rows are tagged `fee`. Descriptions pass through the normal redaction, so card, wallet and account numbers are stored as `[NUM]`.
+- Tests use synthetic PDFs built by `tests/bca_fixture.py` that copy the measured layout and encryption. No real statement is committed.
 
 Dashboard category details query the same tenant, category, half-open period `[start, end)`, and negative `normal`/`fee` transaction rules as the category aggregate. The filtered view is read-only; invalid filters are rejected rather than falling back to the unfiltered transaction list.
 

@@ -36,11 +36,41 @@ services:
       SAKU_DEV_EMAIL: demo@saku.local
       SAKU_DEV_CONTAINER: "1"          # allows 0.0.0.0 inside the container; the host port below stays on loopback
       SAKU_LOAD_DEMO: "1"
+      SAKU_PARSER_SOCKET: /run/saku-parser/parser.sock
+    volumes:
+      - saku_parser_socket:/run/saku-parser
     ports:
       - "127.0.0.1:8090:8090"
     depends_on:
       db:
         condition: service_healthy
+      parser:
+        condition: service_healthy
+
+  parser:
+    profiles: ["dashboard"]
+    build: .
+    command: ["python", "-m", "saku.parser_service"]
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    volumes:
+      - saku_parser_socket:/run/saku-parser
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: 1g
+    cpus: 1.0
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-m", "saku.parser_service", "--healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
 
 volumes:
   saku_pg:
+  saku_parser_socket:
