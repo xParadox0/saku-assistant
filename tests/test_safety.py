@@ -37,6 +37,12 @@ def test_full_account_number_cannot_be_stored(repo):
         repo.add_account("t1", "bank", "demo_bank_a", "A", last4="1234567890")
 
 
+def test_non_ascii_digits_cannot_be_stored_as_account_last4(repo):
+    repo.ensure_tenant("t1")
+    with pytest.raises(ValueError):
+        repo.add_account("t1", "bank", "demo_bank_a", "A", last4="١٢٣٤")
+
+
 def test_redaction():
     s = redact("TRSF KE 1234567890 / HP 081234567890 / a.b@example.com / +6281298765432")
     assert "1234567890" not in s and "081234567890" not in s and "example.com" not in s and "6281298765432" not in s

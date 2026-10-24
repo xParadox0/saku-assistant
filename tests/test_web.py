@@ -1,4 +1,5 @@
 """Dashboard tests. The negatives matter most: forged identity, wrong tenant, missing CSRF, admin leakage."""
+import re
 import time
 import threading
 from datetime import date
@@ -51,8 +52,10 @@ def upload_dir(tmp_path):
 
 
 @pytest.fixture
-def client(seeded, upload_dir):
-    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET, str(upload_dir))
+def client(seeded, upload_dir, parser_socket):
+    from saku.parsers.worker_client import ParserClient
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET, str(upload_dir),
+                     parser_client=ParserClient(parser_socket))
     return TestClient(app)
 
 
@@ -317,6 +320,19 @@ def test_full_account_number_rejected_by_form(client):
     assert r.status_code == 403
 
 
+def test_non_ascii_account_last4_rejected_by_form(client, conn):
+    tok = csrf(client, "alice@example.com")
+    before = conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'alice'").fetchone()[0]
+    response = client.post(
+        "/app/accounts",
+        data={"csrf": tok, "kind": "bank", "provider": "bca", "label": "BCA", "last4": "١٢٣٤"},
+        headers=as_("alice@example.com"),
+    )
+
+    assert response.status_code == 403
+    assert conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'alice'").fetchone()[0] == before
+
+
 def test_accounts_form_has_searchable_provider_numeric_last4_and_ewallets(client):
     page = client.get("/app/accounts", headers=as_("alice@example.com")).text
     assert 'type="hidden" name="provider" data-provider-value' in page
@@ -326,7 +342,7 @@ def test_accounts_form_has_searchable_provider_numeric_last4_and_ewallets(client
     assert 'role="listbox"' in page and 'data-kind="bank"' in page and 'data-kind="ewallet"' in page
     assert '/static/accounts.js?v=' in page and 'defer></script>' in page
     assert 'class="grid-form account-form"' in page
-    assert 'type="number" name="last4"' in page
+    assert 'type="text" name="last4"' in page and 'pattern="[0-9]{4}" maxlength="4"' in page
     for provider in ("GoPay", "OVO", "DANA", "ShopeePay", "LinkAja"):
         assert provider in page
 
@@ -368,6 +384,48 @@ def test_csv_upload_imports_dedupes_and_deletes_file(client, seeded, upload_dir)
     assert list(upload_dir.iterdir()) == []
 
 
+def test_unsupported_upload_closes_disk_spooled_file(client, seeded, monkeypatch):
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    closed = []
+    original_close = StarletteUploadFile.close
+
+    async def capture_close(upload):
+        closed.append((upload, bool(getattr(upload.file, "_rolled", False))))
+        await original_close(upload)
+
+    monkeypatch.setattr(StarletteUploadFile, "close", capture_close)
+    response = client.post(
+        f"/app/accounts/{seeded['alice_acc']}/import",
+        data={"csrf": csrf(client, "alice@example.com")},
+        headers=as_("alice@example.com"),
+        files={"file": ("statement.xls", b"x" * (1024 * 1024 + 1024), "application/octet-stream")},
+    )
+
+    assert response.status_code == 415
+    assert any(rolled for _, rolled in closed)
+    assert all(upload.file.closed for upload, _ in closed)
+
+
+def test_unauthorized_import_rejected_before_busy_global_admission(seeded, upload_dir, parser_socket):
+    from saku.parsers.worker_client import ParserAdmission, ParserClient
+
+    gate = ParserAdmission(max_active=1)
+    assert gate.try_acquire()
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET,
+                     str(upload_dir), parser_client=ParserClient(parser_socket), parser_admission=gate)
+    try:
+        response = TestClient(app).post(
+            f"/app/accounts/{seeded['alice_acc']}/import",
+            data={"csrf": "irrelevant-before-auth"},
+            files={"file": ("untrusted.csv", b"not-read", "text/csv")},
+        )
+    finally:
+        gate.release()
+
+    assert response.status_code == 403
+
+
 def test_bad_csv_is_recorded_as_failed_and_nothing_imported(client, seeded, conn):
     tok = csrf(client, "alice@example.com")
     before = Repo(conn).txn_count("alice")
@@ -383,6 +441,153 @@ def test_unsupported_pdf_is_reported(client, seeded):
     r = client.post(f"/app/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
                     files={"file": ("statement.pdf", b"%PDF-1.4 fake", "application/pdf")})
     assert "format not supported yet" in r.text
+
+
+@pytest.fixture
+def bca_acc(conn):
+    return Repo(conn).add_account("alice", "bank", "bca", "Alice BCA", "6789")
+
+
+def _upload(client, acc, data, name="estatement.pdf"):
+    tok = csrf(client, "alice@example.com")
+    return client.post(f"/app/accounts/{acc}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+                       files={"file": (name, data, "application/pdf")})
+
+
+def test_bca_pdf_upload_imports_balanced_statement_once(client, bca_acc, conn, upload_dir):
+    from bca_fixture import build, sample
+    data = build(sample())
+    r1 = _upload(client, bca_acc, data)
+    assert "10 rows read, 10 new, 0 already imported" in r1.text
+    r2 = _upload(client, bca_acc, data)
+    assert "10 rows read, 0 new, 10 already imported" in r2.text
+    assert list(upload_dir.iterdir()) == []
+    src, parser, file_sha, stored_account, status = conn.execute(
+        "SELECT source, parser, file_sha256, account_id, status FROM import_batch WHERE account_id=%s ORDER BY id LIMIT 1",
+        (bca_acc,)).fetchone()
+    import hashlib
+    assert (src, parser, file_sha, stored_account, status) == (
+        "pdf", "bca-pdf/1", hashlib.sha256(data).hexdigest(), bca_acc, "ok")
+    stored = [d for (d,) in conn.execute("SELECT description FROM txn WHERE account_id=%s", (bca_acc,))]
+    assert not any("1234567890123456" in d for d in stored)        # card and wallet numbers are redacted
+    fee = conn.execute("SELECT kind FROM txn WHERE account_id=%s AND description LIKE 'BIAYA ADM%%'",
+                       (bca_acc,)).fetchone()[0]
+    assert fee == "fee"
+
+
+def test_bca_pdf_into_non_bca_account_is_refused(client, seeded, conn):
+    from bca_fixture import build, sample
+    before = Repo(conn).txn_count("alice")
+    r = _upload(client, seeded["alice_acc"], build(sample()))
+    assert "Import failed" in r.text and "BCA" in r.text
+    assert Repo(conn).txn_count("alice") == before
+
+
+def test_bca_pdf_for_a_different_account_number_is_refused(client, conn):
+    from bca_fixture import build, sample
+    acc = Repo(conn).add_account("alice", "bank", "bca", "Alice BCA 2", "1111")
+    before = Repo(conn).txn_count("alice")
+    r = _upload(client, acc, build(sample()))
+    assert "Import failed" in r.text and "last 4 digits" in r.text
+    assert Repo(conn).txn_count("alice") == before
+
+
+def test_bca_pdf_without_stored_last4_is_refused(client, conn):
+    from bca_fixture import build, sample
+
+    acc = Repo(conn).add_account("alice", "bank", "bca", "Alice BCA without digits")
+    before = Repo(conn).txn_count("alice")
+    response = _upload(client, acc, build(sample()))
+
+    assert "Import failed" in response.text and "last 4 digits" in response.text
+    assert Repo(conn).txn_count("alice") == before
+
+
+def test_existing_bca_account_can_set_last4_before_pdf_import(client, conn):
+    from dataclasses import replace
+    from bca_fixture import build, sample
+
+    repo = Repo(conn)
+    acc = repo.add_account("alice", "bank", "bca", "Alice BCA without digits")
+    page = client.get("/app/accounts", headers=as_("alice@example.com")).text
+    assert f'action="/app/accounts/{acc}/last4"' in page
+    response = client.post(
+        f"/app/accounts/{acc}/last4",
+        data={"csrf": csrf(client, "alice@example.com"), "last4": "0123"},
+        headers=as_("alice@example.com"),
+    )
+    assert response.status_code == 200 and "BCA account digits saved." in response.text
+    assert next(a for a in repo.accounts("alice") if a["id"] == acc)["last4"] == "0123"
+
+    imported = _upload(client, acc, build(replace(sample(), account="1234567890120123")))
+    assert "10 rows read, 10 new" in imported.text
+
+
+def test_last4_update_rejects_invalid_digits_and_other_tenant(client, seeded, conn):
+    bob_acc = Repo(conn).add_account("bob", "bank", "bca", "Bob BCA")
+    token = csrf(client, "alice@example.com")
+
+    invalid_responses = [
+        client.post(
+            f"/app/accounts/{seeded['alice_acc']}/last4",
+            data={"csrf": token, "last4": invalid_last4},
+            headers=as_("alice@example.com"),
+        )
+        for invalid_last4 in ("12x4", "١٢٣٤")
+    ]
+    cross_tenant = client.post(
+        f"/app/accounts/{bob_acc}/last4",
+        data={"csrf": token, "last4": "6789"},
+        headers=as_("alice@example.com"),
+    )
+
+    assert all(response.status_code == 403 for response in invalid_responses)
+    assert cross_tenant.status_code == 404
+    assert next(a for a in Repo(conn).accounts("bob") if a["id"] == bob_acc)["last4"] is None
+
+
+def test_bca_pdf_without_readable_account_number_is_refused_when_last4_is_stored(client, bca_acc, conn):
+    from dataclasses import replace
+    from bca_fixture import build, sample
+    before = Repo(conn).txn_count("alice")
+    r = _upload(client, bca_acc, build(replace(sample(), account="")))
+    assert "Import failed" in r.text and "account number" in r.text
+    assert Repo(conn).txn_count("alice") == before
+
+
+def test_bad_period_is_recorded_as_failed_import_not_500(client, bca_acc, conn):
+    from dataclasses import replace
+    from bca_fixture import build, sample
+    r = _upload(client, bca_acc, build(replace(sample(), period_text="SEPTEMBER 0000")))
+    assert r.status_code == 200 and "Import failed" in r.text
+    assert conn.execute("SELECT status FROM import_batch WHERE account_id=%s ORDER BY id DESC LIMIT 1",
+                        (bca_acc,)).fetchone()[0] == "failed"
+
+
+def test_unsupported_extension_is_rejected_without_mislabeling_source(client, seeded, conn):
+    tok = csrf(client, "alice@example.com")
+    before = conn.execute("SELECT COUNT(*) FROM import_batch WHERE tenant_id='alice'").fetchone()[0]
+    r = client.post(f"/app/accounts/{seeded['alice_acc']}/import", data={"csrf": tok}, headers=as_("alice@example.com"),
+                    files={"file": ("book.xlsx", b"PK\x03\x04 not really", "application/octet-stream")})
+    assert r.status_code == 415
+    assert conn.execute("SELECT COUNT(*) FROM import_batch WHERE tenant_id='alice'").fetchone()[0] == before
+
+
+def test_tampered_bca_pdf_imports_nothing(client, bca_acc, conn):
+    from dataclasses import replace
+    from bca_fixture import build, sample
+    before = Repo(conn).txn_count("alice")
+    r = _upload(client, bca_acc, build(replace(sample(), tamper_closing=Decimal("1.00"))))
+    assert "Import failed" in r.text and "Nothing was imported" in r.text
+    assert Repo(conn).txn_count("alice") == before
+    status, src = conn.execute("SELECT status, source FROM import_batch WHERE account_id=%s ORDER BY id DESC LIMIT 1",
+                               (bca_acc,)).fetchone()
+    assert (status, src) == ("failed", "pdf")
+
+
+def test_accounts_page_says_bca_pdf_is_accepted(client):
+    page = client.get("/app/accounts", headers=as_("alice@example.com")).text
+    assert "BCA e-statement PDF" in page
 
 
 def test_upload_size_limit(client, seeded):
@@ -827,3 +1032,115 @@ def test_data_delete_refuses_shared_tenant(client, seeded, conn):
     }, headers=as_("alice@example.com"))
     assert response.status_code == 403
     assert conn.execute("SELECT COUNT(*) FROM account WHERE tenant_id = 'alice'").fetchone()[0] == 1
+def test_crafted_pdf_upload_does_not_block_other_requests(seeded, upload_dir, bca_acc, monkeypatch, parser_socket):
+    """A decompression-bomb upload is parsed in a limited subprocess off the event loop: /healthz stays fast."""
+    import asyncio
+    import time as _time
+
+    import httpx
+    from bca_fixture import bomb
+    from saku.parsers import sandbox
+
+    real = sandbox.parse_upload
+    monkeypatch.setattr(sandbox, "parse_upload", lambda *a, **k: real(*a, **{**k, "timeout": 4}))
+    from saku.parsers.worker_client import ParserClient
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET, str(upload_dir),
+                     parser_client=ParserClient(parser_socket))
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as http:
+            page = await http.get("/app/accounts", headers=as_("alice@example.com"))
+            tok = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+            upload = asyncio.create_task(http.post(
+                f"/app/accounts/{bca_acc}/import", headers=as_("alice@example.com"),
+                data={"csrf": tok}, files={"file": ("x.pdf", bomb(2_000_000), "application/pdf")}))
+            await asyncio.sleep(0.3)
+            started = _time.monotonic()
+            health = await http.get("/healthz")
+            health_s = _time.monotonic() - started
+            tenant_started = _time.monotonic()
+            other_tenant = await http.get("/app/transactions", headers=as_("bob@example.com"))
+            tenant_s = _time.monotonic() - tenant_started
+            done = await upload
+            return health.status_code, health_s, other_tenant.status_code, tenant_s, done.status_code
+
+    status, health_s, other_tenant_status, tenant_s, upload_status = asyncio.run(scenario())
+    assert status == 200 and health_s < 1.0
+    assert other_tenant_status == 200 and tenant_s < 1.0
+    assert upload_status == 303
+    assert list(upload_dir.iterdir()) == []
+
+
+def test_upload_is_rejected_without_reading_or_recording_when_parser_is_full(seeded, upload_dir, conn, bca_acc):
+    from saku.parsers.worker_client import ParserAdmission
+
+    gate = ParserAdmission(max_active=1)
+    assert gate.try_acquire()
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET,
+                     str(upload_dir), parser_admission=gate)
+    client = TestClient(app)
+    before_txns = Repo(conn).txn_count("alice")
+    before_batches = conn.execute("SELECT COUNT(*) FROM import_batch WHERE tenant_id='alice'").fetchone()[0]
+    try:
+        response = client.post(f"/app/accounts/{bca_acc}/import", data={"csrf": csrf(client, "alice@example.com"),
+            "account_id": str(bca_acc)}, headers=as_("alice@example.com"),
+            files={"file": ("statement.pdf", b"synthetic", "application/pdf")})
+    finally:
+        gate.release()
+    assert response.status_code == 429
+    assert Repo(conn).txn_count("alice") == before_txns
+    assert conn.execute("SELECT COUNT(*) FROM import_batch WHERE tenant_id='alice'").fetchone()[0] == before_batches
+    assert list(upload_dir.iterdir()) == []
+
+
+def test_membership_reassignment_during_parse_prevents_import(seeded, upload_dir, conn):
+    from saku.normalise import RawTxn
+    from saku.parsers.sandbox import ParseOutcome
+
+    acc = Repo(conn).add_account("alice", "bank", "bca", "Alice BCA", "6789")
+
+    class ReassigningParser:
+        async def parse_upload(self, data, suffix, account):
+            conn.execute("UPDATE member SET tenant_id='bob' WHERE email='alice@example.com'")
+            return ParseOutcome("bca-pdf/1", [RawTxn(date(2026, 9, 1), Decimal("-1"), "SYNTHETIC", "normal")], None)
+
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET,
+                     str(upload_dir), parser_client=ReassigningParser())
+    client = TestClient(app)
+    before_txns = Repo(conn).txn_count("alice")
+    before_batches = conn.execute("SELECT COUNT(*) FROM import_batch WHERE account_id=%s", (acc,)).fetchone()[0]
+    try:
+        response = client.post(f"/app/accounts/{acc}/import", data={"csrf": csrf(client, "alice@example.com")},
+            headers=as_("alice@example.com"), files={"file": ("statement.pdf", b"synthetic", "application/pdf")})
+    finally:
+        conn.execute("UPDATE member SET tenant_id='alice' WHERE email='alice@example.com'")
+    assert response.status_code == 403
+    assert Repo(conn).txn_count("alice") == before_txns
+    assert conn.execute("SELECT COUNT(*) FROM import_batch WHERE account_id=%s", (acc,)).fetchone()[0] == before_batches
+
+
+def test_account_binding_change_during_parse_prevents_import(seeded, upload_dir, conn):
+    from saku.normalise import RawTxn
+    from saku.parsers.sandbox import ParseOutcome
+
+    acc = Repo(conn).add_account("alice", "bank", "bca", "Alice BCA", "6789")
+
+    class MutatingParser:
+        async def parse_upload(self, data, suffix, account):
+            conn.execute("UPDATE account SET last4='1111' WHERE id=%s", (acc,))
+            return ParseOutcome("bca-pdf/1", [RawTxn(date(2026, 9, 1), Decimal("-1"), "SYNTHETIC", "normal")], None)
+
+    app = create_app(lambda: psycopg.connect(seeded["url"], autocommit=True), HeaderAuth(), SECRET,
+                     str(upload_dir), parser_client=MutatingParser())
+    client = TestClient(app)
+    before_txns = Repo(conn).txn_count("alice")
+    before_batches = conn.execute("SELECT COUNT(*) FROM import_batch WHERE account_id=%s", (acc,)).fetchone()[0]
+    try:
+        response = client.post(f"/app/accounts/{acc}/import", data={"csrf": csrf(client, "alice@example.com")},
+            headers=as_("alice@example.com"), files={"file": ("statement.pdf", b"synthetic", "application/pdf")})
+    finally:
+        conn.execute("UPDATE account SET last4='6789' WHERE id=%s", (acc,))
+    assert response.status_code == 403
+    assert Repo(conn).txn_count("alice") == before_txns
+    assert conn.execute("SELECT COUNT(*) FROM import_batch WHERE account_id=%s", (acc,)).fetchone()[0] == before_batches
