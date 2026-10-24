@@ -232,3 +232,32 @@ def test_parser_and_client_reject_values_not_representable_in_the_ledger():
             "error": None, "unsupported": False,
         })
         assert client_result.rows is None and client_result.error
+
+
+def test_parser_client_rejects_internal_transfer_kind_from_worker():
+    outcome = ParserClient._outcome({
+        "ok": True,
+        "parser": "bca-pdf/1",
+        "rows": [["2026-09-01", "-1.00", "SYNTHETIC", "own_transfer"]],
+        "error": None,
+        "unsupported": False,
+    })
+    assert outcome.rows is None and outcome.error
+
+
+def test_parser_client_handles_recursion_error_from_worker_response():
+    client = ParserClient()
+
+    async def fail_exchange(message: dict) -> dict:
+        raise RecursionError
+
+    client._exchange = fail_exchange
+
+    async def scenario():
+        outcome = await client.parse_upload(b"synthetic", ".pdf", ACCOUNT)
+        healthy = await client.health_check()
+        return outcome, healthy
+
+    outcome, healthy = asyncio.run(scenario())
+    assert outcome.rows is None and outcome.error
+    assert not healthy

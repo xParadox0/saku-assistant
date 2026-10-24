@@ -104,14 +104,14 @@ class ParserClient:
             response = await asyncio.wait_for(self._exchange(message), timeout=self.timeout)
         except asyncio.TimeoutError:
             return ParseOutcome(None, None, "the statement parser timed out. Nothing was imported")
-        except (OSError, ValueError, UnicodeError, asyncio.LimitOverrunError):
+        except (OSError, ValueError, UnicodeError, RecursionError, asyncio.LimitOverrunError):
             return ParseOutcome(None, None, "the statement parser is temporarily unavailable. Nothing was imported")
         return self._outcome(response)
 
     async def health_check(self) -> bool:
         try:
             response = await asyncio.wait_for(self._exchange({"op": "health"}), timeout=min(self.timeout, 2.0))
-        except (asyncio.TimeoutError, OSError, ValueError, UnicodeError, asyncio.LimitOverrunError):
+        except (asyncio.TimeoutError, OSError, ValueError, UnicodeError, RecursionError, asyncio.LimitOverrunError):
             return False
         return response.get("ok") is True or response.get("busy") is True
 
@@ -169,7 +169,8 @@ class ParserClient:
                 day_text, amount_text, description, kind = item
                 if not isinstance(day_text, str) or not isinstance(amount_text, str):
                     raise ValueError
-                if not isinstance(description, str) or len(description) > 2_000 or not isinstance(kind, str):
+                if (not isinstance(description, str) or len(description) > 2_000
+                        or not isinstance(kind, str) or kind not in {"normal", "fee", "refund"}):
                     raise ValueError
                 amount = Decimal(amount_text)
                 if not valid_transaction_amount(amount):

@@ -120,9 +120,16 @@ class ImportUploadMiddleware:
         await send({"type": "http.response.body", "body": message})
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("method") != "POST" or not (
-            scope.get("path") == "/app/imports"
-            or re.fullmatch(r"/app/accounts/[0-9]+/import", scope.get("path", ""))
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        root_path = scope.get("root_path", "").rstrip("/")
+        if root_path and (path == root_path or path.startswith(root_path + "/")):
+            path = path[len(root_path):] or "/"
+        path = path.removesuffix("\n")
+        if not (
+            path == "/app/imports"
+            or re.fullmatch(r"/app/accounts/[^/]+/import", path)
         ):
             return await self.app(scope, receive, send)
 
@@ -139,20 +146,20 @@ class ImportUploadMiddleware:
             if not isinstance(tenant_id, str) or not tenant_id:
                 return await self._reject(send, 503, b"Sign-in check unavailable. Try again.")
 
+        headers = dict(scope.get("headers", []))
+        content_length = headers.get(b"content-length")
+        if content_length:
+            try:
+                announced_size = int(content_length)
+            except ValueError:
+                return await self._reject(send, 400, b"Invalid upload length.")
+            if announced_size < 0 or announced_size > self.max_body_bytes:
+                return await self._reject(send, 413, b"Upload request is too large.")
+
         if not self.admission.try_acquire(tenant_id):
             return await self._reject(send, 429, b"The parser is busy or this workspace reached its upload limit. Try again later.")
 
         try:
-            headers = dict(scope.get("headers", []))
-            content_length = headers.get(b"content-length")
-            if content_length:
-                try:
-                    announced_size = int(content_length)
-                except ValueError:
-                    return await self._reject(send, 400, b"Invalid upload length.")
-                if announced_size < 0 or announced_size > self.max_body_bytes:
-                    return await self._reject(send, 413, b"Upload request is too large.")
-
             total = 0
             deadline = asyncio.get_running_loop().time() + self.body_timeout
 
