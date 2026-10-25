@@ -72,7 +72,7 @@ The demo dashboard signs you in as a fixed demo user with synthetic data, and on
 | Page | What it does |
 |---|---|
 | Overview | Latest-month Money in/out and per-account movements including internal transfers; income/spending analysis excluding internal transfers; monthly trend and recent transactions |
-| Accounts | Add, rename and delete accounts; upload a statement per account; download the CSV template |
+| Accounts | Add, rename and delete accounts; upload a statement per account (BCA e-statement PDF or Saku CSV); download the CSV template |
 | Transactions | Review transactions in a compact responsive table; expand one row to edit or delete it |
 | Imports | Every upload with rows read, new and duplicate, including failed ones and why |
 | Ops | Admin only. Per-tenant counts, failed imports and component heartbeats, without any transaction content |

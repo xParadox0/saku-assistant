@@ -43,6 +43,13 @@
           <input type="text" name="label" value="{{ a.label }}" maxlength="60" required aria-label="New name for {{ a.label }}">
           <button type="submit" class="quiet">Save</button>
         </form>
+        {% if a.provider == 'bca' %}
+        <form method="post" action="/app/accounts/{{ a.id }}/last4" class="row-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="text" name="last4" value="{{ a.last4 or '' }}" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required aria-label="Last 4 digits for {{ a.label }}" placeholder="Last 4 digits">
+          <button type="submit" class="quiet">Save last 4</button>
+        </form>
+        {% endif %}
         {% if a.transactions == 0 %}
         <form method="post" action="/app/accounts/{{ a.id }}/delete">
           <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -79,7 +86,7 @@
       <input type="file" name="file" accept=".csv,.pdf" required></label>
     <button type="submit">{{ icon('i-upload') }}Import</button>
   </form>
-  <p class="hint">Accepted now: the Saku CSV format. <a href="/app/accounts/template.csv">Download the template</a>. Bank formats are being added one by one.</p>
+  <p class="hint">Accepted now: BCA e-statement PDF (the monthly file from BCA, uploaded as is) and the Saku CSV format. BCA PDF imports require the account's last 4 digits to be saved and to match the statement. <a href="/app/accounts/template.csv">Download the CSV template</a>. Other banks are being added one by one.</p>
 </section>
 {% endif %}
 
@@ -111,7 +118,7 @@
       <small data-provider-help>Only bank providers are shown.</small>
     </div>
     <label class="field last4-field"><span>Last 4 digits, optional</span>
-      <input type="number" name="last4" inputmode="numeric" min="0" max="9999" step="1" placeholder="1234">
+      <input type="text" name="last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="1234">
       <small>Exactly 4 digits when provided.</small></label>
     <label class="field name-field"><span>Name shown in Saku</span>
       <input name="label" required maxlength="60" placeholder="Daily spending"></label>

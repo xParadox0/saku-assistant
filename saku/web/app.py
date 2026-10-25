@@ -8,6 +8,7 @@ Security model (see docs/HLD.md 3.9):
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -15,8 +16,6 @@ import json
 import os
 import re
 import secrets
-import shutil
-import tempfile
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -25,13 +24,13 @@ from typing import Callable
 from urllib.parse import quote
 
 import psycopg
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from dataclasses import dataclass, field
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import parsers
+from ..parsers.worker_client import MAX_UPLOAD_BYTES, ParserAdmission, ParserClient
 from ..db import connect, init_schema
 from .. import insights
 from ..categorise import CATEGORIES, label as cat_label
@@ -43,7 +42,6 @@ from .login import GraphMailer, Login, MailError, OutboxMailer, normalise_email
 
 HERE = Path(__file__).parent
 DEMO_TENANT = "demo"
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 ASSET_VERSION = hashlib.sha256(
     b"".join((HERE / "static" / name).read_bytes() for name in ("saku.css", "accounts.js"))
 ).hexdigest()[:12]
@@ -90,6 +88,106 @@ class NotMember(Exception):
 
 class LoginRequired(Exception):
     """No live Saku session (own sign-in mode)."""
+
+
+class _ImportBodyTooLarge(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=413, detail="Upload request is too large.")
+
+
+class _ImportBodyTimedOut(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=408, detail="Upload timed out. Try again.")
+
+
+class ImportUploadMiddleware:
+    """Bound upload parsing before FastAPI's multipart parser buffers the body."""
+
+    def __init__(self, app, admission: ParserAdmission, max_body_bytes: int,
+                 body_timeout: float = 30.0, authorize=None):
+        self.app = app
+        self.admission = admission
+        self.max_body_bytes = max_body_bytes
+        self.body_timeout = body_timeout
+        self.authorize = authorize
+
+    @staticmethod
+    async def _reject(send, status: int, message: bytes, extra_headers=()) -> None:
+        await send({"type": "http.response.start", "status": status, "headers": [
+            (b"content-type", b"text/plain; charset=utf-8"),
+            (b"content-length", str(len(message)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+            *extra_headers,
+        ]})
+        await send({"type": "http.response.body", "body": message})
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        root_path = scope.get("root_path", "").rstrip("/")
+        if root_path and (path == root_path or path.startswith(root_path + "/")):
+            path = path[len(root_path):] or "/"
+        path = path.removesuffix("\n")
+        if not (
+            path == "/app/imports"
+            or re.fullmatch(r"/app/accounts/[^/]+/import", path)
+        ):
+            return await self.app(scope, receive, send)
+
+        tenant_id = None
+        if self.authorize is not None:
+            try:
+                denial = await asyncio.to_thread(self.authorize, scope)
+            except Exception:
+                denial = (503, [], b"Sign-in check unavailable. Try again.")
+            if denial is not None:
+                status, headers, message = denial
+                return await self._reject(send, status, message, headers)
+            tenant_id = scope.get("state", {}).get("import_tenant_id")
+            if not isinstance(tenant_id, str) or not tenant_id:
+                return await self._reject(send, 503, b"Sign-in check unavailable. Try again.")
+
+        headers = dict(scope.get("headers", []))
+        content_length = headers.get(b"content-length")
+        if content_length:
+            try:
+                announced_size = int(content_length)
+            except ValueError:
+                return await self._reject(send, 400, b"Invalid upload length.")
+            if announced_size < 0 or announced_size > self.max_body_bytes:
+                return await self._reject(send, 413, b"Upload request is too large.")
+
+        if not self.admission.try_acquire(tenant_id):
+            return await self._reject(send, 429, b"The parser is busy or this workspace reached its upload limit. Try again later.")
+
+        try:
+            total = 0
+            deadline = asyncio.get_running_loop().time() + self.body_timeout
+
+            async def limited_receive():
+                nonlocal total
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise _ImportBodyTimedOut
+                try:
+                    message = await asyncio.wait_for(receive(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    raise _ImportBodyTimedOut from None
+                if message.get("type") == "http.request":
+                    total += len(message.get("body", b""))
+                    if total > self.max_body_bytes:
+                        raise _ImportBodyTooLarge
+                return message
+
+            try:
+                return await self.app(scope, limited_receive, send)
+            except _ImportBodyTooLarge:
+                return await self._reject(send, 413, b"Upload request is too large.")
+            except _ImportBodyTimedOut:
+                return await self._reject(send, 408, b"Upload timed out. Try again.")
+        finally:
+            self.admission.release()
 
 
 SESSION_COOKIE = "saku_session"
@@ -142,13 +240,17 @@ def _donut(cats: list[dict], total: Decimal) -> list[dict]:
 
 def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, secret: str,
                upload_root: str | None = None, bot_username: str | None = None,
-               beta: Beta | None = None, login: Login | None = None, admin_guard=None) -> FastAPI:
+               beta: Beta | None = None, login: Login | None = None, admin_guard=None, *,
+               parser_client: ParserClient | None = None,
+               parser_admission: ParserAdmission | None = None) -> FastAPI:
     """authenticator: identifies from request headers (dev mode, tests). login: Saku's own sign-in; when set it
     replaces the authenticator for every /app route. admin_guard: an extra header check (Cloudflare Access) that
     /app/admin must also pass, for the same email."""
     beta = beta or Beta()
     if login is None and authenticator is None:
         raise SystemExit("either an authenticator or the own sign-in is required")
+    parser_client = parser_client or ParserClient()
+    parser_admission = parser_admission or ParserAdmission(max_active=1)
     bot_username = (bot_username or "").lstrip("@") or None
     if bot_username and not re.fullmatch(r"[A-Za-z0-9_]{5,32}", bot_username):
         raise SystemExit("SAKU_BOT_USERNAME is not a valid Telegram username")
@@ -161,7 +263,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     templates.env.globals["asset_version"] = ASSET_VERSION
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
     key = secret.encode()
-    upload_root = upload_root or tempfile.gettempdir()
+
 
     @contextmanager
     def repo_ctx():
@@ -197,6 +299,28 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         if member is None:
             raise NotMember(ident.email)
         return ident, member
+
+    def authorize_import(scope):
+        """Authenticate and confirm membership before upload admission or body reads."""
+        try:
+            with repo_ctx() as repo:
+                _, member = who(Request(scope), repo)
+                scope.setdefault("state", {})["import_tenant_id"] = member["tenant_id"]
+        except LoginRequired:
+            return 303, [(b"location", b"/login")], b""
+        except NotMember:
+            return 403, [], b"This email has no Saku account yet."
+        except AuthUnavailable:
+            return 503, [], b"Sign-in check unavailable. Try again."
+        except AuthError:
+            return 401, [], b"Sign-in required."
+        except Exception:
+            return 503, [], b"Sign-in check unavailable. Try again."
+        return None
+
+    app.add_middleware(ImportUploadMiddleware, admission=parser_admission,
+                       max_body_bytes=MAX_UPLOAD_BYTES + 64 * 1024,
+                       authorize=authorize_import)
 
     def check_csrf(ident: Identity, token: str) -> None:
         if not hmac.compare_digest(token or "", csrf_token(ident.email)):
@@ -391,6 +515,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             t = member["tenant_id"]
             result = repo.import_batch(t, batch) if batch else None
             notices = {"deleted": "Account deleted.", "renamed": "Account renamed.", "added": "Account added.",
+                       "last4": "BCA account digits saved.",
                        "has_transactions": "This account has transactions, so it was not deleted."}
             return render(request, "accounts.html", ident, member, page="accounts", accounts=repo.account_stats(t),
                           result=result, notice=notices.get(notice or ""), kinds=sorted(ACCOUNT_KINDS),
@@ -404,7 +529,7 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             check_csrf(ident, csrf)
             provider = provider.strip().lower()
             if kind not in ACCOUNT_KINDS or not PROVIDER_RE.match(provider) or not 1 <= len(label.strip()) <= 60 \
-                    or (last4 and not re.fullmatch(r"\d{4}", last4)):
+                    or (last4 and not re.fullmatch(r"[0-9]{4}", last4)):
                 raise Forbidden("Check the account fields: provider is a short slug, label 1-60 characters, last 4 digits only.")
             repo.add_account(member["tenant_id"], kind, provider, label.strip(), last4 or None)
         return RedirectResponse("/app/accounts?notice=added", status_code=303)
@@ -422,6 +547,19 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
                 raise NotFound("Account not found.")
         return RedirectResponse("/app/accounts?notice=renamed", status_code=303)
 
+    @app.post("/app/accounts/{account_id}/last4")
+    def set_account_last4(request: Request, account_id: int, csrf: str = Form(""), last4: str = Form(...)):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            try:
+                ok = repo.set_account_last4(member["tenant_id"], account_id, last4)
+            except ValueError as e:
+                raise Forbidden(str(e)) from None
+            if not ok:
+                raise NotFound("BCA account not found.")
+        return RedirectResponse("/app/accounts?notice=last4", status_code=303)
+
     @app.post("/app/accounts/{account_id}/delete")
     def delete(request: Request, account_id: int, csrf: str = Form("")):
         with repo_ctx() as repo:
@@ -433,38 +571,47 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
         return RedirectResponse(f"/app/accounts?notice={outcome}", status_code=303)
 
     async def _import(request: Request, account_id: int, csrf: str, file: UploadFile):
-        data = await file.read(MAX_UPLOAD_BYTES + 1)
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             check_csrf(ident, csrf)
-            t = member["tenant_id"]
-            acct = next((a for a in repo.accounts(t) if a["id"] == account_id), None)
-            if acct is None:
+            tenant_id = member["tenant_id"]
+            account = next((a for a in repo.accounts(tenant_id) if a["id"] == account_id), None)
+            if account is None:
                 raise NotFound("Account not found.")
-            if len(data) > MAX_UPLOAD_BYTES:
-                return templates.TemplateResponse(request, "error.html", {"title": "File too large",
-                    "message": f"The limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."}, status_code=413)
-            sha = hashlib.sha256(data).hexdigest()
-            suffix = Path(file.filename or "").suffix.lower()[:6] or ".bin"
-            workdir = tempfile.mkdtemp(prefix="saku-upload-", dir=upload_root)
+
+        suffix = Path(file.filename or "").suffix.lower()[:6]
+        if suffix not in (".pdf", ".csv"):
+            return templates.TemplateResponse(request, "error.html", {"title": "File type not supported",
+                "message": "Choose a PDF statement or a Saku CSV file. Nothing was imported."}, status_code=415)
+        if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+            return templates.TemplateResponse(request, "error.html", {"title": "File too large",
+                "message": f"The limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."}, status_code=413)
+
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
+            return templates.TemplateResponse(request, "error.html", {"title": "File too large",
+                "message": f"The limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."}, status_code=413)
+        file_sha256 = hashlib.sha256(data).hexdigest()
+        source = "pdf" if suffix == ".pdf" else "csv"
+        outcome = await parser_client.parse_upload(data, suffix, account)
+
+        with repo_ctx() as repo:
+            current_identity, current_member = who(request, repo)
+            if current_identity.email != ident.email or current_member["tenant_id"] != tenant_id:
+                raise Forbidden("Workspace access changed during import. Nothing was imported.")
+            if outcome.unsupported:
+                error = "format not supported yet; download the Saku CSV template on this page"
+            elif outcome.error is not None or outcome.rows is None or outcome.parser is None:
+                error = outcome.error or "the file could not be read. Nothing was imported"
+            else:
+                error = None
             try:
-                path = Path(workdir) / f"statement{suffix}"
-                path.write_bytes(data)
-                parser = parsers.pick(path, acct["provider"])
-                if parser is None:
-                    batch_id = repo.record_failed_import(t, account_id, suffix.lstrip(".") or "file", None, sha,
-                        "format not supported yet; download the Saku CSV template on this page")
-                else:
-                    try:
-                        rows = parser.parse(path)
-                    except parsers.ParseError as e:
-                        batch_id = repo.record_failed_import(t, account_id, "csv", parser.name, sha, str(e))
-                    else:
-                        batch_id = repo.import_rows(t, account_id, rows, "csv", parser.name, sha).batch_id
-                        repo.detect_own_transfers(t)
-                        repo.apply_categories(t)
-            finally:
-                shutil.rmtree(workdir, ignore_errors=True)
+                batch_id = repo.import_statement_for_member(
+                    tenant_id, ident.email, account, source, file_sha256,
+                    outcome.parser, outcome.rows, error,
+                )
+            except PermissionError:
+                raise Forbidden("Workspace access or account details changed during import. Nothing was imported.") from None
         return RedirectResponse(f"/app/accounts?batch={batch_id}", status_code=303)
 
     @app.post("/app/accounts/{account_id}/import")

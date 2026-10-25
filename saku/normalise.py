@@ -13,6 +13,15 @@ from datetime import date
 from decimal import Decimal
 
 KINDS = {"normal", "own_transfer", "fee", "refund"}
+MAX_LEDGER_AMOUNT = Decimal("9999999999999999.99")  # schema.sql: NUMERIC(18,2)
+
+
+def valid_transaction_amount(value: Decimal) -> bool:
+    """Whether an amount is finite and representable without rounding in txn.amount."""
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return False
+    exponent = value.as_tuple().exponent
+    return value.copy_abs() <= MAX_LEDGER_AMOUNT and isinstance(exponent, int) and exponent >= -2
 
 _WS = re.compile(r"\s+")
 _PHONE = re.compile(r"(?<!\d)(?:\+?62|0)8\d{7,11}(?!\d)")

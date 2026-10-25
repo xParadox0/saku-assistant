@@ -47,7 +47,7 @@ class Repo:
                     last4: str | None = None, currency: str = "IDR") -> int:
         if kind not in ACCOUNT_KINDS:
             raise ValueError(f"unknown account kind {kind!r}")
-        if last4 is not None and not re.fullmatch(r"\d{4}", last4):
+        if last4 is not None and not re.fullmatch(r"[0-9]{4}", last4):
             raise ValueError("last4 must be exactly 4 digits; never store a full account number")
         row = self.c.execute(
             "INSERT INTO account (tenant_id, kind, provider, label, last4, currency) "
@@ -397,6 +397,15 @@ class Repo:
         cur = self.c.execute("UPDATE account SET label = %s WHERE id = %s AND tenant_id = %s", (label, account_id, tenant_id))
         return cur.rowcount == 1
 
+    def set_account_last4(self, tenant_id: str, account_id: int, last4: str) -> bool:
+        if not re.fullmatch(r"[0-9]{4}", last4):
+            raise ValueError("last 4 digits must be exactly 4 digits")
+        cur = self.c.execute(
+            "UPDATE account SET last4 = %s WHERE id = %s AND tenant_id = %s AND provider = 'bca'",
+            (last4, account_id, tenant_id),
+        )
+        return cur.rowcount == 1
+
     def delete_account(self, tenant_id: str, account_id: int) -> str:
         """'deleted', 'has_transactions' or 'not_found'. An account with history is never deleted silently."""
         row = self.c.execute(
@@ -431,6 +440,39 @@ class Repo:
             "VALUES (%s, %s, %s, %s, %s, 'failed', 0, 0, 0, %s) RETURNING id",
             (tenant_id, account_id, source, file_sha256, parser, error[:500]),
         ).fetchone()[0]
+
+    def import_statement_for_member(self, tenant_id: str, email: str, account: dict, source: str,
+                                    file_sha256: str, parser: str | None, rows: list[RawTxn] | None,
+                                    error: str | None = None) -> int:
+        """Re-authorize and persist an upload atomically after the parser has returned.
+
+        Lock order is tenant -> member -> account, matching tenant deletion. The locks
+        prevent membership/account changes between this check and the ledger commit.
+        """
+        if source not in {"pdf", "csv"}:
+            raise ValueError("unsupported import source")
+        if not account or account.get("id") is None:
+            raise PermissionError("account binding changed during import")
+        email = email.strip().lower()
+        with self.c.transaction():
+            tenant = self.c.execute("SELECT id FROM tenant WHERE id = %s FOR SHARE", (tenant_id,)).fetchone()
+            member = self.c.execute("SELECT tenant_id FROM member WHERE email = %s FOR SHARE", (email,)).fetchone()
+            current = self.c.execute(
+                "SELECT provider, last4 FROM account WHERE id = %s AND tenant_id = %s FOR SHARE",
+                (account["id"], tenant_id),
+            ).fetchone()
+            if (tenant is None or member is None or member[0] != tenant_id or current is None
+                    or current != (account.get("provider"), account.get("last4"))):
+                raise PermissionError("tenant membership or account binding changed during import")
+
+            if error is not None or parser is None or rows is None or not rows:
+                safe_error = (error or "the file could not be read. Nothing was imported")[:500]
+                return self.record_failed_import(tenant_id, account["id"], source, parser, file_sha256, safe_error)
+
+            result = self.import_rows(tenant_id, account["id"], rows, source, parser, file_sha256)
+            self.detect_own_transfers(tenant_id)
+            self.apply_categories(tenant_id)
+            return result.batch_id
 
     # ---- closed beta: signups ---------------------------------------------------------------------------
     def signup_get(self, email: str) -> dict | None:

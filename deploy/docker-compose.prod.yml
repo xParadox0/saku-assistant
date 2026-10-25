@@ -44,11 +44,39 @@ services:
       SAKU_APPROVED_CAP: ${SAKU_APPROVED_CAP:-20}
       SAKU_POLICY_REVIEWED: ${SAKU_POLICY_REVIEWED:-}
       SAKU_CONTACT: ${SAKU_CONTACT:-}
-    depends_on: { db: { condition: service_healthy } }
+      SAKU_PARSER_SOCKET: /run/saku-parser/parser.sock
+    depends_on:
+      db: { condition: service_healthy }
+      parser: { condition: service_healthy }
     networks: [internal, edge, egress]   # egress for Access signing keys and Microsoft Graph mail; no published ports
     read_only: true
     tmpfs: [/tmp]
+    volumes:
+      - saku-parser-socket:/run/saku-parser
     security_opt: ["no-new-privileges:true"]
+
+  parser:
+    build: { context: .., dockerfile: Dockerfile }
+    restart: unless-stopped
+    command: ["python", "-m", "saku.parser_service"]
+    network_mode: none
+    volumes:
+      - saku-parser-socket:/run/saku-parser
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: 1g
+    cpus: 1.0
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-m", "saku.parser_service", "--healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 3s
 
   bot:
     build: { context: .., dockerfile: Dockerfile }
@@ -80,6 +108,7 @@ services:
 
 volumes:
   saku-pg:
+  saku-parser-socket:
 
 networks:
   internal: { internal: true }   # db, web, bot: no route out
