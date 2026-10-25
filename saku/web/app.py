@@ -25,6 +25,7 @@ from urllib.parse import quote
 
 import psycopg
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from dataclasses import dataclass, field
 from fastapi.staticfiles import StaticFiles
@@ -376,6 +377,15 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     async def _notfound(request: Request, exc: NotFound):
         return templates.TemplateResponse(request, "error.html", {"title": "Not found", "message": str(exc)}, status_code=404)
 
+    @app.exception_handler(HTTPException)
+    async def _http_exception(request: Request, exc: HTTPException):
+        path = request.url.path
+        if request.method == "POST" and (path == "/app/plans" or path.startswith("/app/plans/")):
+            return templates.TemplateResponse(request, "error.html", {
+                "title": "Plan request rejected", "message": str(exc.detail),
+            }, status_code=exc.status_code)
+        return await http_exception_handler(request, exc)
+
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz():
         with repo_ctx() as repo:
@@ -640,9 +650,14 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             try:
                 value = Decimal(amount)
                 day = date.fromisoformat(booked_on)
+            except (ValueError, ArithmeticError):
+                raise HTTPException(status_code=400, detail="Enter a valid amount and date.") from None
+            try:
                 recorded = repo.record_goal_entry(member["tenant_id"], goal_id, entry_type, value, day, note)
-            except (ValueError, ArithmeticError) as exc:
-                raise HTTPException(status_code=400, detail=str(exc) or "Enter a valid plan activity.") from None
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            except ArithmeticError:
+                raise HTTPException(status_code=400, detail="Enter a valid plan activity.") from None
             if not recorded:
                 raise NotFound("Plan not found.")
         return RedirectResponse("/app/plans?notice=activity", status_code=303)

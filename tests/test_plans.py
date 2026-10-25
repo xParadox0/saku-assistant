@@ -10,6 +10,34 @@ from saku.repo import Repo
 from test_web import as_, client, csrf, seeded, upload_dir
 
 
+def test_invalid_plan_post_renders_html_error(client, seeded, conn):
+    headers = as_("alice@example.com")
+    token = csrf(client, "alice@example.com")
+    invalid = client.post("/app/plans", headers=headers, follow_redirects=False, data={
+        "csrf": token, "name": "Bad plan", "target": "not-a-number",
+    })
+    assert invalid.status_code == 400
+    assert invalid.headers["content-type"].startswith("text/html")
+    assert "Plan request rejected" in invalid.text
+    assert "Enter valid amounts and dates." in invalid.text
+
+    created = client.post("/app/plans", headers=headers, follow_redirects=False, data={
+        "csrf": token, "name": "Good plan", "target": "100",
+    })
+    assert created.status_code == 303
+    goal_id = conn.execute("SELECT id FROM goal WHERE tenant_id='alice' AND name='Good plan'").fetchone()[0]
+    bad_entry = client.post(f"/app/plans/{goal_id}/entries", headers=headers, follow_redirects=False, data={
+        "csrf": token, "entry_type": "contribution", "amount": "bad",
+        "booked_on": Repo(conn).tenant_today("alice").isoformat(),
+    })
+    assert bad_entry.status_code == 400
+    assert bad_entry.headers["content-type"].startswith("text/html")
+    assert "Plan request rejected" in bad_entry.text
+    assert "Enter a valid amount and date." in bad_entry.text
+    assert "ConversionSyntax" not in bad_entry.text
+    assert conn.execute("SELECT saved FROM goal WHERE id=%s", (goal_id,)).fetchone()[0] == Decimal("0.00")
+
+
 def test_plan_create_and_entries_do_not_write_to_transaction_ledger(client, seeded, conn):
     headers = as_("alice@example.com")
     token = csrf(client, "alice@example.com")
