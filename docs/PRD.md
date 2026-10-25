@@ -87,6 +87,7 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 - **F11 Data export and delete.** A member can download all product data for their tenant as JSON and delete the entire tenant only after an exact confirmation. Authentication secrets are never exported; deletion also removes linked Telegram and sign-in state. A shared tenant cannot be deleted by one member, and the UI explains the existing backup-retention boundary (UU PDP rights).
 - **F21 Web dashboard for the user.** Monthly overview across accounts, trend, per-account totals, recent transactions; account management (add, rename, delete when empty); statement upload; import history including failures. Each displayed spending category opens a read-only list of the transactions that make up its total for the exact same reporting period and inclusion rules. Login with an email code on Saku's own sign-in page (no password).
 - **F22 Ops page for the admin.** Per-tenant counts, last import, failed imports, component heartbeats. Never shows another tenant's transactions, descriptions, amounts or account names.
+- **F28 Financial plans and reserves.** A member can create, edit, pause/resume and complete named plans with a target amount, optional target/review date, and optional fixed weekly/monthly contribution schedule. Record contributions and uses as planning-only activity in a separate history; show current progress, remaining amount, next date, in-app due/upcoming/overdue state, and a transparent projection when a target date and schedule exist. These actions never move or lock money, write `txn` rows, or send Telegram/email reminders. F11 export/delete covers plan history.
 - **F24 Public landing and demo.** A public front page and a read-only demo on synthetic data. No login. No real data, no forms that write.
 - **F25 Self-registration with consent.** A visitor proves an email address (a 6-digit code sent by email), fills a short form and accepts the privacy policy and terms. The result is a pending request, not an account.
 - **F26 Owner approval queue.** The owner approves or rejects each request on the ops page. Approval creates the tenant and the member. Pending and rejected users cannot upload, connect Telegram or see any financial page.
@@ -94,7 +95,7 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 
 ### Should
 - **F12 Email notification ingest.** Read-only access to a mail label where the user forwards bank notifications. Near real-time transactions.
-- **F13 Budgets and goals.** Monthly budget per category and savings goals with progress.
+- **F13 Budget tracking.** Monthly budget per category. Web-managed savings goals and reserves are covered by F28.
 - **F14 Bill and due-date reminders** from recurring patterns and user-entered bills.
 - **F15 Income opportunities.** Match the user's skill profile to public job/freelance sources. Scam filter. Weekly digest.
 - **F16 Post-spend nudge.** When a transaction breaks a budget or a pattern, a short message, at most once per day.
@@ -106,7 +107,7 @@ MoSCoW. IDs are referenced by the HLD and the build plan.
 
 ### Won't (v1)
 - **F20** Real-time bank aggregation via a licensed aggregator. Revisited only with a business entity and partner agreement.
-- **F23** Budgets, goals, wishlist and category rules managed from the dashboard. They stay in Telegram until the dashboard has proved itself.
+- **F23** Budgets, wishlist and category rules managed from the dashboard. These remain Telegram-first until the dashboard has proved itself; savings goals/reserves are the specific F28 exception.
 
 ## 6. Non-functional requirements
 
@@ -145,6 +146,7 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 | Spam or fake sign-ups | Registration creates only a pending row; a cap on open pending requests; sign-in codes are rate limited per email and per IP; the owner reviews every request |
 | Public pages widen the attack surface | Public routes read only the synthetic demo tenant; the app under the protected path still verifies the Access JWT itself; CSP without scripts; tests that public pages contain no other tenant's data |
 | Users trust the beta with data before the legal basis is clear | Stage 0e gate; the waiting page and the privacy policy state that this is a closed beta run by one person |
+| Users mistake a plan entry for a real transaction or account balance | Keep plans visibly planning-only, store activity outside `txn`, and state that no money moves or ledger rows are created |
 
 ## 9. Open questions and decisions
 
@@ -162,9 +164,10 @@ PostgreSQL on a small instance handles all three rows. No special storage is nee
 - Own PostgreSQL container in the project's `docker compose`, so the demo runs with one command and the project does not depend on any private infrastructure.
 - Public repository under MIT license.
 - F15 income scope for v1: freelance and job openings only. Local side work is out of scope for now.
-- A web dashboard is part of v1 (F21, F22), for both the user's money picture and an admin ops view. The first management function is accounts and statement upload; budgets and categories follow later (F23).
+- A web dashboard is part of v1 (F21, F22). Accounts and statement upload are the first management functions; F28 adds virtual savings plans only. Budgets, wishlist and category-rule management remain Telegram-first under F23.
 - The real-data dashboard needs a Saku sign-in (email code); the ops page additionally sits behind Cloudflare Access. The origin listens on 127.0.0.1 and has no open port.
 - 2026-10-18: public pages and the registration flow are in English with a switch to Indonesian. The dashboard itself stays English for now.
 - 2026-10-18: beta caps are 20 approved users and 50 open pending requests.
 - 2026-10-18: the owner and a legal consultant review the privacy policy and terms. Approving anyone except the owner stays blocked in code until the reviewed version is configured.
 - 2026-10-18: closed beta. The site is public; anyone may register; access to the app needs owner approval. This replaces the v0.1 non-goal "no public multi-user launch". Login was first Cloudflare Access one-time codes. Replaced the same day by Saku's own email-code login so the sign-in page is on Saku's domain and sign-ups use no third-party seats; Saku still stores no passwords.
+- 2026-10-25: owner requested web-managed financial plans/reserves (#13). F28 is the scoped exception to F23: virtual-only progress entries, no transaction attribution or ledger writes, in-app reminders only, weekly/monthly schedule projection.

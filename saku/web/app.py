@@ -25,6 +25,7 @@ from urllib.parse import quote
 
 import psycopg
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from dataclasses import dataclass, field
 from fastapi.staticfiles import StaticFiles
@@ -35,7 +36,9 @@ from ..db import connect, init_schema
 from .. import insights
 from ..categorise import CATEGORIES, label as cat_label
 from ..format import rupiah, rupiah_short, signed_rupiah
+from ..normalise import MAX_LEDGER_AMOUNT
 from ..repo import ACCOUNT_KINDS, Repo
+from ..planning import project_goal
 from . import i18n
 from .auth import AuthError, AuthUnavailable, CloudflareAccessAuth, DevAuth, Identity
 from .login import GraphMailer, Login, MailError, OutboxMailer, normalise_email
@@ -374,6 +377,15 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
     async def _notfound(request: Request, exc: NotFound):
         return templates.TemplateResponse(request, "error.html", {"title": "Not found", "message": str(exc)}, status_code=404)
 
+    @app.exception_handler(HTTPException)
+    async def _http_exception(request: Request, exc: HTTPException):
+        path = request.url.path
+        if request.method == "POST" and (path == "/app/plans" or path.startswith("/app/plans/")):
+            return templates.TemplateResponse(request, "error.html", {
+                "title": "Plan request rejected", "message": str(exc.detail),
+            }, status_code=exc.status_code)
+        return await http_exception_handler(request, exc)
+
     @app.get("/healthz", response_class=PlainTextResponse)
     def healthz():
         with repo_ctx() as repo:
@@ -423,37 +435,97 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             raise Forbidden("Unknown transaction type.")
         return account, day, value, description.strip(), kind
 
+    def plan_form_values(name: str, target: str, due_on: str, schedule_amount: str,
+                         schedule_cadence: str, next_contribution_on: str, review_on: str,
+                         today: date) -> dict:
+        def optional_date(raw: str) -> date | None:
+            return date.fromisoformat(raw) if raw.strip() else None
+
+        try:
+            target_value = Decimal(target)
+            due_date = optional_date(due_on)
+            schedule_value = Decimal(schedule_amount) if schedule_amount.strip() else None
+            next_date = optional_date(next_contribution_on)
+            review_date = optional_date(review_on)
+        except (TypeError, ValueError, ArithmeticError):
+            raise HTTPException(status_code=400, detail="Enter valid amounts and dates.") from None
+        def boundary(year: int) -> date:
+            try:
+                return today.replace(year=year)
+            except ValueError:
+                return today.replace(year=year, day=28)
+
+        earliest = boundary(max(date.min.year, today.year - 100))
+        latest = boundary(min(date.max.year, today.year + 100))
+        if any(day is not None and not earliest <= day <= latest
+               for day in (due_date, next_date, review_date)):
+            raise HTTPException(status_code=400, detail="Plan dates must be within 100 years of today.")
+        if not target_value.is_finite() or not Decimal("0") < target_value <= MAX_LEDGER_AMOUNT:
+            raise HTTPException(status_code=400, detail="Target must be a positive amount.")
+        if not name.strip() or len(name.strip()) > 80:
+            raise HTTPException(status_code=400, detail="Plan name must be 1 to 80 characters.")
+        if schedule_value is None:
+            if schedule_cadence.strip() or next_date is not None:
+                raise HTTPException(status_code=400, detail="Enter a schedule amount, cadence, and next date together.")
+            cadence = None
+        else:
+            cadence = schedule_cadence.strip()
+            if not schedule_value.is_finite() or schedule_value <= 0 or cadence not in {"weekly", "monthly"} or next_date is None:
+                raise HTTPException(status_code=400, detail="Enter a positive amount, weekly/monthly cadence, and next date.")
+        if schedule_value is not None and schedule_value > MAX_LEDGER_AMOUNT:
+            raise HTTPException(status_code=400, detail="Schedule amount is too large.")
+        return {"name": name.strip(), "target": target_value, "due_on": due_date,
+                "schedule_amount": schedule_value, "schedule_cadence": cadence,
+                "next_contribution_on": next_date, "review_on": review_date}
+
     @app.get("/app/transactions", response_class=HTMLResponse)
     def transactions(request: Request, notice: str | None = None, category: str | None = None,
-                     start: str | None = None, end: str | None = None):
+                     start: str | None = None, end: str | None = None, through: str | None = None):
         with repo_ctx() as repo:
             ident, member = who(request, repo)
             notices = {
                 "created": "Transaction added.", "updated": "Transaction updated.",
                 "deleted": "Transaction deleted.", "transfer_deleted": "Transfer and its paired row deleted.",
             }
-            filters = (category, start, end)
+            filters = (category, start, end, through)
             category_detail = any(value is not None for value in filters)
             category_context = {}
             transactions = []
             if category_detail:
-                if category is None or start is None or end is None or not category or len(category) > 80:
+                if category is None or start is None or (end is None and through is None) or not category or len(category) > 80:
                     raise Forbidden("Choose a valid spending category and reporting period.")
                 try:
                     start_date = date.fromisoformat(start)
-                    end_date = date.fromisoformat(end)
-                except (TypeError, ValueError):
+                    if through is not None:
+                        if end is not None:
+                            raise ValueError
+                        through_date = date.fromisoformat(through)
+                        if through_date.isoformat() != through:
+                            raise ValueError
+                        end_date = through_date + timedelta(days=1)
+                    else:
+                        if end is None:
+                            raise ValueError
+                        end_date = date.fromisoformat(end)
+                        if end_date.isoformat() != end:
+                            raise ValueError
+                        through_date = end_date - timedelta(days=1)
+                except (TypeError, ValueError, OverflowError):
                     raise Forbidden("Choose a valid spending category and reporting period.") from None
-                if start_date.isoformat() != start or end_date.isoformat() != end or start_date >= end_date:
+                if start_date.isoformat() != start or start_date >= end_date:
                     raise Forbidden("Choose a valid spending category and reporting period.")
-                if category not in SPENDING_CATEGORIES and category not in {
-                    row["category"] for row in repo.spending_by_category(member["tenant_id"], start_date, end_date)
-                }:
+                tenant_id = member["tenant_id"]
+                spending_categories = sorted(SPENDING_CATEGORIES | set(repo.spending_categories(tenant_id)))
+                if category not in spending_categories:
                     raise Forbidden("Choose a valid spending category and reporting period.")
-                transactions = repo.spending_transactions(member["tenant_id"], category, start_date, end_date)
+                transactions = repo.spending_transactions(tenant_id, category, start_date, end_date)
                 category_context = {
+                    "category": category,
+                    "spending_categories": [{"value": value, "label": cat_label(value)[0]} for value in spending_categories],
+                    "period_start": start_date.isoformat(),
+                    "period_through": through_date.isoformat(),
                     "category_label": cat_label(category)[0],
-                    "category_period": f"{start_date.strftime('%-d %b %Y')} – {(end_date - timedelta(days=1)).strftime('%-d %b %Y')}",
+                    "category_period": f"{start_date.strftime('%-d %b %Y')} – {through_date.strftime('%-d %b %Y')}",
                     "category_total": sum((-row["amount"] for row in transactions), Decimal(0)),
                 }
             else:
@@ -507,6 +579,101 @@ def create_app(conn_factory: Callable[[], psycopg.Connection], authenticator, se
             if not count:
                 raise NotFound("Transaction not found.")
         return RedirectResponse("/app/transactions?notice=" + ("transfer_deleted" if count == 2 else "deleted"), status_code=303)
+
+    def plan_page(request: Request, repo: Repo, ident: Identity, member: dict, notice: str | None = None):
+        tenant_id = member["tenant_id"]
+        today = repo.tenant_today(tenant_id)
+        plans = []
+        for plan in repo.list_goals(tenant_id):
+            plan.update(project_goal(plan, today))
+            plan["progress_percent"] = (
+                min(int(plan["saved"] / plan["target"] * 100), 100) if plan["target"] > 0 else 0
+            )
+            plan["entries"] = repo.goal_entries(tenant_id, plan["id"])
+            plans.append(plan)
+        notices = {
+            "created": "Plan created.", "updated": "Plan updated.",
+            "activity": "Plan activity recorded.", "status": "Plan status updated.",
+        }
+        return render(request, "plans.html", ident, member, page="plans", plans=plans, today=today,
+                      notice=notices.get(notice or ""))
+
+    @app.get("/app/plans", response_class=HTMLResponse)
+    def plans(request: Request, notice: str | None = None):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            return plan_page(request, repo, ident, member, notice)
+
+    @app.post("/app/plans")
+    def add_plan(request: Request, csrf: str = Form(""), name: str = Form(""), target: str = Form(""),
+                 due_on: str = Form(""), schedule_amount: str = Form(""),
+                 schedule_cadence: str = Form(""), next_contribution_on: str = Form(""),
+                 review_on: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            values = plan_form_values(name, target, due_on, schedule_amount,
+                                      schedule_cadence, next_contribution_on, review_on,
+                                      repo.tenant_today(member["tenant_id"]))
+            try:
+                repo.create_goal(member["tenant_id"], **values)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+        return RedirectResponse("/app/plans?notice=created", status_code=303)
+
+    @app.post("/app/plans/{goal_id}/edit")
+    def edit_plan(request: Request, goal_id: int, csrf: str = Form(""), name: str = Form(""),
+                  target: str = Form(""), due_on: str = Form(""), schedule_amount: str = Form(""),
+                  schedule_cadence: str = Form(""), next_contribution_on: str = Form(""),
+                  review_on: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            values = plan_form_values(name, target, due_on, schedule_amount,
+                                      schedule_cadence, next_contribution_on, review_on,
+                                      repo.tenant_today(member["tenant_id"]))
+            try:
+                changed = repo.update_goal(member["tenant_id"], goal_id, **values)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            if not changed:
+                raise NotFound("Plan not found.")
+        return RedirectResponse("/app/plans?notice=updated", status_code=303)
+
+    @app.post("/app/plans/{goal_id}/entries")
+    def add_plan_entry(request: Request, goal_id: int, csrf: str = Form(""),
+                       entry_type: str = Form(""), amount: str = Form(""),
+                       booked_on: str = Form(""), note: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            try:
+                value = Decimal(amount)
+                day = date.fromisoformat(booked_on)
+            except (ValueError, ArithmeticError):
+                raise HTTPException(status_code=400, detail="Enter a valid amount and date.") from None
+            try:
+                recorded = repo.record_goal_entry(member["tenant_id"], goal_id, entry_type, value, day, note)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            except ArithmeticError:
+                raise HTTPException(status_code=400, detail="Enter a valid plan activity.") from None
+            if not recorded:
+                raise NotFound("Plan not found.")
+        return RedirectResponse("/app/plans?notice=activity", status_code=303)
+
+    @app.post("/app/plans/{goal_id}/status")
+    def change_plan_status(request: Request, goal_id: int, csrf: str = Form(""), status: str = Form("")):
+        with repo_ctx() as repo:
+            ident, member = who(request, repo)
+            check_csrf(ident, csrf)
+            try:
+                changed = repo.set_goal_status(member["tenant_id"], goal_id, status)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
+            if not changed:
+                raise NotFound("Plan not found.")
+        return RedirectResponse("/app/plans?notice=status", status_code=303)
 
     @app.get("/app/accounts", response_class=HTMLResponse)
     def accounts(request: Request, batch: int | None = None, notice: str | None = None):

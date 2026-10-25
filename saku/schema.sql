@@ -79,8 +79,54 @@ CREATE TABLE IF NOT EXISTS goal (
     name        TEXT NOT NULL,
     target      NUMERIC(18,2) NOT NULL,
     due_on      DATE,
-    saved       NUMERIC(18,2) NOT NULL DEFAULT 0 -- user-reported; the system cannot move money
+    saved       NUMERIC(18,2) NOT NULL DEFAULT 0 -- virtual plan balance; the system cannot move money
 );
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS schedule_amount NUMERIC(18,2);
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS schedule_cadence TEXT;
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS schedule_day SMALLINT;
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS next_contribution_on DATE;
+ALTER TABLE goal ADD COLUMN IF NOT EXISTS review_on DATE;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'goal_status_valid' AND conrelid = 'goal'::regclass) THEN
+        ALTER TABLE goal ADD CONSTRAINT goal_status_valid CHECK (status IN ('active', 'paused', 'completed'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'goal_schedule_amount_positive' AND conrelid = 'goal'::regclass) THEN
+        ALTER TABLE goal ADD CONSTRAINT goal_schedule_amount_positive CHECK (schedule_amount IS NULL OR schedule_amount > 0);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'goal_schedule_cadence_valid' AND conrelid = 'goal'::regclass) THEN
+        ALTER TABLE goal ADD CONSTRAINT goal_schedule_cadence_valid CHECK (schedule_cadence IS NULL OR schedule_cadence IN ('weekly', 'monthly'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'goal_schedule_complete' AND conrelid = 'goal'::regclass) THEN
+        ALTER TABLE goal ADD CONSTRAINT goal_schedule_complete CHECK (
+            (schedule_amount IS NULL AND schedule_cadence IS NULL AND schedule_day IS NULL AND next_contribution_on IS NULL)
+            OR (schedule_amount IS NOT NULL AND schedule_cadence IS NOT NULL AND schedule_day BETWEEN 1 AND 31 AND next_contribution_on IS NOT NULL)
+        );
+    END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS goal_tenant_id_unique ON goal (tenant_id, id);
+CREATE TABLE IF NOT EXISTS goal_entry (
+    id          BIGSERIAL PRIMARY KEY,
+    tenant_id   TEXT NOT NULL REFERENCES tenant(id),
+    goal_id     BIGINT NOT NULL,
+    entry_type  TEXT NOT NULL CHECK (entry_type IN ('opening', 'contribution', 'use')),
+    amount      NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+    booked_on   DATE NOT NULL,
+    note        TEXT NOT NULL DEFAULT '' CHECK (length(note) <= 200),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (tenant_id, goal_id) REFERENCES goal (tenant_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS goal_entry_tenant_goal_date ON goal_entry (tenant_id, goal_id, booked_on DESC, id DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS goal_entry_one_opening ON goal_entry (goal_id) WHERE entry_type = 'opening';
+INSERT INTO goal_entry (tenant_id, goal_id, entry_type, amount, booked_on, note)
+SELECT g.tenant_id, g.id, 'opening', g.saved, (now() AT TIME ZONE t.tz)::date, 'Balance carried forward'
+FROM goal g
+JOIN tenant t ON t.id = g.tenant_id
+WHERE g.saved > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM goal_entry e WHERE e.tenant_id = g.tenant_id AND e.goal_id = g.id
+  )
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS wishlist (
     id          BIGSERIAL PRIMARY KEY,

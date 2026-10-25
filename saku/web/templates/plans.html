@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Plans · Saku{% endblock %}
+{% block content %}
+<header class="hello rise">
+  <div>
+    <p class="greet">Plan at your pace</p>
+    <h1>Goals &amp; reserves</h1>
+    <p class="lede">Track a target, contributions, and planned uses. These plans are virtual: Saku never moves money or changes your transaction ledger.</p>
+  </div>
+</header>
+{% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
+
+<section class="card plan-create rise d1">
+  <div class="card-head"><div><h2>Start a plan</h2><p class="hint">A target date and contribution schedule are optional.</p></div></div>
+  <form method="post" action="/app/plans" class="plan-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field"><span>Plan name</span><input name="name" maxlength="80" required placeholder="Emergency reserve"></label>
+    <label class="field"><span>Target amount</span><input type="number" name="target" min="0.01" step="0.01" required placeholder="5000000"></label>
+    <label class="field"><span>Target date <small>(optional)</small></span><input type="date" name="due_on"></label>
+    <label class="field"><span>Contribution amount <small>(optional)</small></span><input type="number" name="schedule_amount" min="0.01" step="0.01" placeholder="250000"></label>
+    <label class="field"><span>Frequency</span><select name="schedule_cadence"><option value="">No schedule</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>
+    <label class="field"><span>Next contribution <small>(optional)</small></span><input type="date" name="next_contribution_on"></label>
+    <label class="field"><span>Review date <small>(optional)</small></span><input type="date" name="review_on"></label>
+    <button type="submit">{{ icon('i-plus') }}Create plan</button>
+  </form>
+  <p class="plan-footnote">Plan activity is separate from transactions. Record actual account activity in Transactions as usual.</p>
+</section>
+
+<section class="panel rise d2">
+  <div class="card-head"><div><h2>Your plans</h2><p class="hint">Progress is calculated from the activity you record here.</p></div><span class="hint">{{ plans|length }} total</span></div>
+  {% if plans %}
+  <div class="plan-grid">
+    {% for p in plans %}
+    <article class="card plan-card">
+      <header class="plan-card-head">
+        <span class="plan-symbol" aria-hidden="true">{{ icon('i-wallet') }}</span>
+        <div class="plan-heading"><span class="plan-status status-{{ p.status }}">{{ p.status|title }}</span><h3>{{ p.name }}</h3></div>
+        <span class="plan-target"><small>Target</small><b>{{ p.target|rupiah }}</b></span>
+      </header>
+      <div class="plan-progress">
+        <progress max="100" value="{{ p.progress_percent }}" aria-label="{{ p.name }} progress: {{ p.progress_percent }} percent"></progress>
+        <div class="plan-balance"><strong>{{ p.saved|rupiah }}</strong><span>{{ p.remaining|rupiah }} to go</span></div>
+      </div>
+      <div class="plan-facts">
+        <span><small>Target date</small><b>{{ p.due_on.strftime('%-d %b %Y') if p.due_on else 'No target date' }}</b></span>
+        <span><small>Next contribution / review</small><b>{{ p.next_action_on.strftime('%-d %b %Y') if p.next_action_on else 'Not scheduled' }}</b></span>
+        <span><small>Schedule</small><b>{% if p.schedule_amount %}{{ p.schedule_amount|rupiah }} · {{ p.schedule_cadence }}{% else %}Flexible{% endif %}</b></span>
+      </div>
+      <p class="plan-projection projection-{{ p.projection_status }}">
+        {% if p.projection_status == 'on_track' %}<b>On track.</b> At this schedule, projected balance is {{ p.projected_amount|rupiah }} by {{ p.due_on.strftime('%-d %b %Y') }}.
+        {% elif p.projection_status == 'behind' %}<b>Needs attention.</b> Current schedule projects {{ p.projected_amount|rupiah }} by {{ p.due_on.strftime('%-d %b %Y') }}.
+        {% elif p.projection_status == 'no_schedule' %}Add a weekly or monthly contribution schedule to see a projection.
+        {% elif p.projection_status == 'no_target_date' %}Ongoing reserve. Add a target date and schedule for a simple projection.
+        {% elif p.projection_status == 'invalid_target' %}<b>Needs review.</b> This plan has no positive target. Edit it to set one.
+        {% elif p.projection_status == 'paused' %}Projection paused with this plan.
+        {% elif p.projection_status == 'complete' %}{% if p.status == 'completed' %}<b>Plan complete.</b> {% if p.remaining > 0 %}This plan is marked complete. Reopen it to resume tracking activity.{% else %}The target has been reached.{% endif %}{% else %}<b>Target reached.</b> You can mark this plan complete when ready.{% endif %}
+        {% endif %}
+      </p>
+      {% if p.reminder_status == 'overdue' %}<p class="plan-reminder overdue">{{ icon('i-calendar') }}Contribution or review is overdue.</p>
+      {% elif p.reminder_status == 'due' %}<p class="plan-reminder due">{{ icon('i-calendar') }}Contribution or review is due today.</p>
+      {% elif p.reminder_status == 'upcoming' %}<p class="plan-reminder upcoming">{{ icon('i-calendar') }}Contribution or review is coming up this week.</p>{% endif %}
+
+      {% if p.status == 'active' %}
+      <form method="post" action="/app/plans/{{ p.id }}/entries" class="plan-entry-form">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <fieldset class="plan-choice"><legend>Record activity</legend>
+          <label><input type="radio" name="entry_type" value="contribution" checked><span>Add</span></label>
+          <label><input type="radio" name="entry_type" value="use"><span>Use</span></label>
+        </fieldset>
+        <div class="plan-entry-fields">
+          <label class="field"><span>Amount</span><input type="number" name="amount" min="0.01" step="0.01" required placeholder="100000"></label>
+          <label class="field"><span>Date</span><input type="date" name="booked_on" value="{{ today }}" required></label>
+          <label class="field field-wide"><span>Note <small>(optional)</small></span><input name="note" maxlength="200" placeholder="Monthly savings"></label>
+          <button type="submit">Save activity</button>
+        </div>
+        <small class="plan-footnote">A use cannot exceed the plan balance. This does not add or remove a transaction.</small>
+      </form>
+      {% else %}
+      <p class="plan-paused-copy">{% if p.status == 'paused' %}Resume this plan to record activity.{% else %}This plan is complete. Reopen it to record activity.{% endif %}</p>
+      {% endif %}
+
+      <div class="plan-actions">
+        <details class="plan-edit">
+          <summary>Edit plan</summary>
+          <form method="post" action="/app/plans/{{ p.id }}/edit" class="plan-form plan-edit-form">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <label class="field"><span>Plan name</span><input name="name" maxlength="80" required value="{{ p.name }}"></label>
+            <label class="field"><span>Target amount</span><input type="number" name="target" min="0.01" step="0.01" required value="{{ p.target }}"></label>
+            <label class="field"><span>Target date</span><input type="date" name="due_on" value="{{ p.due_on or '' }}"></label>
+            <label class="field"><span>Contribution amount</span><input type="number" name="schedule_amount" min="0.01" step="0.01" value="{{ p.schedule_amount or '' }}"></label>
+            <label class="field"><span>Frequency</span><select name="schedule_cadence"><option value="" {% if not p.schedule_cadence %}selected{% endif %}>No schedule</option><option value="weekly" {% if p.schedule_cadence == 'weekly' %}selected{% endif %}>Weekly</option><option value="monthly" {% if p.schedule_cadence == 'monthly' %}selected{% endif %}>Monthly</option></select></label>
+            <label class="field"><span>Next contribution</span><input type="date" name="next_contribution_on" value="{{ p.next_contribution_on or '' }}"></label>
+            <label class="field"><span>Review date</span><input type="date" name="review_on" value="{{ p.review_on or '' }}"></label>
+            <button type="submit">Save changes</button>
+          </form>
+        </details>
+        {% if p.status == 'active' %}
+        <form method="post" action="/app/plans/{{ p.id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="paused"><button class="quiet" type="submit">Pause</button></form>
+        <form method="post" action="/app/plans/{{ p.id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="completed"><button class="quiet" type="submit">Complete</button></form>
+        {% else %}
+        <form method="post" action="/app/plans/{{ p.id }}/status"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="active"><button class="quiet" type="submit">{{ 'Resume' if p.status == 'paused' else 'Reopen' }}</button></form>
+        {% endif %}
+      </div>
+
+      {% if p.entries %}
+      <details class="plan-history"><summary>Activity history <span>{{ p.entries|length }} entries</span></summary>
+        <ul>
+        {% for e in p.entries %}
+          <li><span class="entry-mark entry-{{ e.entry_type }}">{{ '+' if e.entry_type != 'use' else '−' }}</span><span class="entry-copy"><b>{{ 'Starting balance' if e.entry_type == 'opening' else e.entry_type|title }}</b><small>{{ e.booked_on.strftime('%-d %b %Y') }}{% if e.note %} · {{ e.note }}{% endif %}</small></span><strong>{{ e.amount|rupiah }}</strong></li>
+        {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="plan-empty"><span class="plan-empty-icon">{{ icon('i-spark') }}</span><div><h3>No plans yet</h3><p>Start with one goal or reserve above. Add a schedule later if you want a projection.</p></div></div>
+  {% endif %}
+</section>
+{% endblock %}
