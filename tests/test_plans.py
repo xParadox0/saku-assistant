@@ -238,17 +238,24 @@ def test_plan_page_handles_legacy_zero_target(client, seeded, conn):
 
 
 def test_goal_schema_backfills_legacy_balance_once(conn, seeded):
-    legacy_id = conn.execute(
-        "INSERT INTO goal (tenant_id, name, target, saved) VALUES ('alice', 'Existing goal', 1000, 275) RETURNING id"
-    ).fetchone()[0]
-    init_schema(conn)
-    entries = conn.execute(
-        "SELECT entry_type, amount FROM goal_entry WHERE goal_id=%s AND tenant_id='alice'", (legacy_id,)
-    ).fetchall()
-    assert entries == [("opening", Decimal("275.00"))]
-    init_schema(conn)
-    count = conn.execute("SELECT COUNT(*) FROM goal_entry WHERE goal_id=%s", (legacy_id,)).fetchone()[0]
-    assert count == 1
+    with conn.transaction():
+        conn.execute("SET LOCAL TIME ZONE 'Pacific/Kiritimati'")
+        conn.execute("UPDATE tenant SET tz='Pacific/Pago_Pago' WHERE id='alice'")
+        tenant_today = conn.execute(
+            "SELECT (now() AT TIME ZONE 'Pacific/Pago_Pago')::date"
+        ).fetchone()[0]
+        legacy_id = conn.execute(
+            "INSERT INTO goal (tenant_id, name, target, saved) VALUES ('alice', 'Existing goal', 1000, 275) RETURNING id"
+        ).fetchone()[0]
+        init_schema(conn)
+        entries = conn.execute(
+            "SELECT entry_type, amount, booked_on FROM goal_entry WHERE goal_id=%s AND tenant_id='alice'",
+            (legacy_id,),
+        ).fetchall()
+        assert entries == [("opening", Decimal("275.00"), tenant_today)]
+        init_schema(conn)
+        count = conn.execute("SELECT COUNT(*) FROM goal_entry WHERE goal_id=%s", (legacy_id,)).fetchone()[0]
+        assert count == 1
 
 
 def test_schema_restart_does_not_backfill_new_plan_activity_as_opening(conn, seeded):

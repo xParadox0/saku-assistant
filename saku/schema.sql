@@ -119,8 +119,9 @@ CREATE TABLE IF NOT EXISTS goal_entry (
 CREATE INDEX IF NOT EXISTS goal_entry_tenant_goal_date ON goal_entry (tenant_id, goal_id, booked_on DESC, id DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS goal_entry_one_opening ON goal_entry (goal_id) WHERE entry_type = 'opening';
 INSERT INTO goal_entry (tenant_id, goal_id, entry_type, amount, booked_on, note)
-SELECT g.tenant_id, g.id, 'opening', g.saved, CURRENT_DATE, 'Balance carried forward'
+SELECT g.tenant_id, g.id, 'opening', g.saved, (now() AT TIME ZONE t.tz)::date, 'Balance carried forward'
 FROM goal g
+JOIN tenant t ON t.id = g.tenant_id
 WHERE g.saved > 0
   AND NOT EXISTS (
       SELECT 1 FROM goal_entry e WHERE e.tenant_id = g.tenant_id AND e.goal_id = g.id
