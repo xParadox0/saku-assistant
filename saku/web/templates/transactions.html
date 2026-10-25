@@ -10,6 +10,19 @@
 </header>
 {% if notice %}<p class="notice good rise">{{ icon('i-check') }}<span>{{ notice }}</span></p>{% endif %}
 
+{% if category_detail %}
+<section class="card category-filter-card rise d1">
+  <div class="card-head"><div><h2>Adjust this view</h2><p class="hint">Choose another category or date range. The Dashboard link takes you back to your monthly overview.</p></div></div>
+  <form method="get" action="/app/transactions" class="category-filter-form">
+    <label class="field"><span>Category</span><select name="category" required>{% for item in spending_categories %}<option value="{{ item.value }}" {% if item.value == category %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></label>
+    <label class="field"><span>From</span><input type="date" name="start" value="{{ period_start }}" required></label>
+    <label class="field"><span>Through</span><input type="date" name="through" value="{{ period_through }}" required></label>
+    <button type="submit">Update view</button>
+    <div class="category-filter-actions"><a class="link" href="/app/transactions">Clear filters</a><a class="link" href="/app">Dashboard</a></div>
+  </form>
+</section>
+{% endif %}
+
 {% if not category_detail %}
 <section class="card rise" id="add-transaction">
   <div class="card-head"><h2>Add transaction</h2><span class="hint">Use the same account names as the Dashboard</span></div>
@@ -27,12 +40,12 @@
 <section class="panel rise d1">
   <div class="card-head">
     <h2>{% if category_detail %}{{ category_label }} spending{% else %}All transactions{% endif %}</h2>
-    <span class="hint">{% if category_detail %}{{ transactions|length }} payments · {{ category_total|rupiah }}{% else %}{{ transactions|length }} shown{% endif %}</span>
+    <span class="hint">{% if category_detail %}{{ transactions|length }} payment{{ '' if transactions|length == 1 else 's' }} · {{ category_total|rupiah }}{% else %}{{ transactions|length }} shown{% endif %}</span>
   </div>
   {% if transactions %}
-  <div class="transaction-list">
+  <div class="transaction-list{% if category_detail %} category-detail-list{% endif %}">
     <div class="transaction-table-head" aria-hidden="true">
-      <span>Date</span><span>Account</span><span>Description</span><span>Type</span><span class="num">Amount</span>{% if not category_detail %}<span>Action</span>{% endif %}
+      <span>Date</span><span>Account</span><span>Description</span>{% if category_detail %}<span>Category</span>{% endif %}<span>Type</span><span class="num">Amount</span>{% if not category_detail %}<span>Action</span>{% endif %}
     </div>
   {% for t in transactions %}
     <details class="transaction-row" {% if category_detail %}open{% endif %} data-txn-id="{{ t.id }}">
@@ -40,6 +53,7 @@
         <time class="transaction-date" datetime="{{ t.booked_on }}">{{ t.booked_on.day }} {{ t.booked_on.strftime('%b %Y') }}</time>
         <span class="transaction-account">{{ t.account }}</span>
         <span class="transaction-description">{{ t.description|title }}</span>
+        {% if category_detail %}<span class="transaction-category">{{ cat(t.category or 'other')[0] }}</span>{% endif %}
         <span class="transaction-kind k-{{ t.kind }}">{{ t.kind|replace('_', ' ')|title }}</span>
         <strong class="transaction-amount {{ 'income' if t.amount > 0 else 'neg' }}">{{ t.amount|signed_rupiah }}</strong>
         {% if not category_detail %}<span class="transaction-edit-label">Edit {{ icon('i-chevron') }}</span>{% endif %}

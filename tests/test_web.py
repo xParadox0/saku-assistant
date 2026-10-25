@@ -106,6 +106,10 @@ def test_category_detail_is_tenant_scoped_and_reconciles_category_total(client, 
     assert "Taxi August" not in page and "Taxi October" not in page
     assert "Bob Private Purchase" not in page
     assert "Read-only category detail" in page
+    assert 'name="category"' in page
+    assert 'name="start"' in page and 'name="through"' in page
+    assert 'href="/app/transactions"' in page and 'href="/app"' in page
+    assert "Category" in page
     assert 'id="add-transaction"' not in page and "Delete transaction" not in page
 
 
@@ -117,6 +121,7 @@ def test_category_detail_reconciles_uncategorized_rows(client, conn):
     response = client.get('/app/transactions?category=other&start=2026-09-01&end=2026-10-01',
                           headers=as_('alice@example.com'))
     assert response.status_code == 200
+    assert '1 payment · Rp80.000' in response.text
     assert 'Alice Lunch' in response.text
     assert repo.spending_transactions('alice', 'other', date(2026, 9, 1), date(2026, 10, 1))
     assert sum(-r['amount'] for r in repo.spending_transactions('alice', 'other', date(2026, 9, 1), date(2026, 10, 1))) == expected
@@ -130,11 +135,56 @@ def test_category_detail_accepts_legacy_category_present_in_tenant_aggregate(cli
     assert 'Alice Lunch' in response.text
 
 
+def test_category_filter_form_switches_category_and_inclusive_period(client, seeded, conn):
+    repo = Repo(conn)
+    repo.import_manual_rows("alice", seeded["alice_acc"], [
+        RawTxn(date(2026, 8, 10), Decimal(-30_000), "AUGUST BUS"),
+    ], "test:filter-change")
+    conn.execute("UPDATE txn SET category = 'transport' WHERE tenant_id='alice' AND description='AUGUST BUS'")
+    conn.execute("UPDATE txn SET category = 'health' WHERE tenant_id='alice' AND description='ALICE LUNCH'")
+    headers = as_("alice@example.com")
+
+    august = client.get("/app/transactions?category=transport&start=2026-08-01&through=2026-08-31",
+                        headers=headers)
+    assert august.status_code == 200
+    assert "August Bus" in august.text
+    assert 'name="through" value="2026-08-31"' in august.text
+
+    september = client.get("/app/transactions?category=health&start=2026-09-01&through=2026-09-30",
+                           headers=headers)
+    assert september.status_code == 200
+    assert "Alice Lunch" in september.text and "August Bus" not in september.text
+    assert "Rp80.000" in september.text
+    assert 'href="/app/transactions"' in september.text
+    assert 'href="/app"' in september.text
+
+
+def test_category_detail_uses_the_same_fee_refund_and_transfer_rules(client, seeded, conn):
+    repo = Repo(conn)
+    repo.import_manual_rows("alice", seeded["alice_acc"], [
+        RawTxn(date(2026, 9, 14), Decimal(-50_000), "FEE SHOP", "fee"),
+        RawTxn(date(2026, 9, 15), Decimal(7_000), "REFUND SHOP", "refund"),
+        RawTxn(date(2026, 9, 16), Decimal(-99_000), "TRANSFER SHOP", "own_transfer"),
+    ], "test:category-kinds")
+    conn.execute("UPDATE txn SET category='transport' WHERE tenant_id='alice' AND description IN ('FEE SHOP', 'REFUND SHOP', 'TRANSFER SHOP')")
+    from datetime import date as dt_date
+    start, end = dt_date(2026, 9, 1), dt_date(2026, 10, 1)
+    aggregate = next(row["amount"] for row in repo.spending_by_category("alice", start, end)
+                     if row["category"] == "transport")
+    details = repo.spending_transactions("alice", "transport", start, end)
+    assert sum(-row["amount"] for row in details) == aggregate
+    assert any(row["kind"] == "fee" for row in details)
+    assert not any(row["kind"] in {"refund", "own_transfer"} for row in details)
+    page = client.get("/app/transactions?category=transport&start=2026-09-01&end=2026-10-01",
+                      headers=as_("alice@example.com"))
+    assert "Fee Shop" in page.text
+    assert "Refund Shop" not in page.text and "Transfer Shop" not in page.text
+
+
 def test_invalid_category_detail_filter_is_rejected_not_broadened(client):
     response = client.get("/app/transactions?category=income&start=2026-09-01&end=2026-10-01",
                           headers=as_("alice@example.com"))
     assert response.status_code == 403
-
 
 def test_category_detail_has_an_explicit_empty_state(client):
     response = client.get("/app/transactions?category=health&start=2026-09-01&end=2026-10-01",

@@ -92,6 +92,14 @@ E-wallet top-ups usually also appear as an outflow on a bank statement. The norm
 - Every create, edit and delete request requires the user's CSRF token and an account belonging to the current tenant. Deleting one side of a paired own transfer deletes both sides together.
 - Amounts are signed at the form boundary: negative is money out and positive is money in. Passwords, PINs, OTPs and full account numbers are not accepted or stored.
 
+### 3.3b Web financial plans (F28)
+- `/app/plans` is an authenticated, tenant-scoped surface over `goal` and `goal_entry`. Create/edit/status/activity POSTs use the existing Saku identity and email-bound CSRF token.
+- A plan is virtual guidance, not an account or ledger object. Contributions and uses update `goal.saved` and append a positive-amount `goal_entry` in one database transaction; entry type determines whether it adds or subtracts. No route writes `txn`, changes an account balance, or moves money.
+- `goal_entry` is keyed by `(tenant_id, goal_id)` through a composite foreign key. Repository reads and writes filter by tenant, and updates lock the selected goal before checking that a use does not exceed its virtual saved amount. F11 export includes plans and entries; tenant deletion removes both.
+- Optional schedules are fixed weekly or monthly amounts with an explicit next date. Monthly advancement retains the chosen day-of-month across shorter months. If a contribution is recorded on or after the scheduled date, the next date advances; a use does not advance it.
+- An in-app reminder state is computed in the tenant's timezone (`due today`, `upcoming`, `overdue`); no Telegram/email is sent. If target date and schedule exist, the projection is current saved amount plus scheduled installments from today through the target date. Without those inputs the page says that a projection is unavailable rather than implying one.
+- `schema.sql` adds the fields idempotently and carries any pre-existing positive `goal.saved` into one `opening` entry; the partial unique index makes repeated startup safe.
+
 ### 3.4 Categoriser (F6)
 Order of authority, highest first:
 1. User correction for this transaction.
@@ -209,7 +217,26 @@ CREATE TABLE goal (
     name        TEXT NOT NULL,
     target      NUMERIC(18,2) NOT NULL,
     due_on      DATE,
-    saved       NUMERIC(18,2) NOT NULL DEFAULT 0 -- user-reported; the system cannot move money
+    saved       NUMERIC(18,2) NOT NULL DEFAULT 0, -- cached virtual balance; never an account balance
+    status      TEXT NOT NULL DEFAULT 'active',   -- active | paused | completed
+    schedule_amount NUMERIC(18,2),                -- optional recurring virtual contribution
+    schedule_cadence TEXT,                         -- weekly | monthly
+    schedule_day SMALLINT,                        -- preserve monthly anchor through short months
+    next_contribution_on DATE,
+    review_on   DATE,
+    UNIQUE (tenant_id, id)
+);
+
+CREATE TABLE goal_entry (
+    id          BIGSERIAL PRIMARY KEY,
+    tenant_id   TEXT NOT NULL REFERENCES tenant(id),
+    goal_id     BIGINT NOT NULL,
+    entry_type  TEXT NOT NULL,                    -- opening | contribution | use
+    amount      NUMERIC(18,2) NOT NULL CHECK (amount > 0), -- type controls its effect on saved
+    booked_on   DATE NOT NULL,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (tenant_id, goal_id) REFERENCES goal(tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE wishlist (
@@ -256,7 +283,8 @@ Server-rendered pages (FastAPI + Jinja2), no JavaScript. The page Content-Securi
 ```text
 /              overview: latest month income, spending, surplus/deficit, trend, by account, recent rows
 /accounts      list, add, rename, delete (only when empty), upload a statement per account
-/transactions list, edit, delete; category and period filters from the dashboard are read-only and tenant-scoped
+/transactions list, edit, delete; category detail is read-only, tenant-scoped, and can change category/period or clear its filters
+/plans         create, edit, pause/resume, complete; virtual progress and activity only (F28)
 /imports       every import batch, including failures and their error text
 /admin         ops view, admin role only: tenants, heartbeats, recent batches (metadata only)
 /healthz       liveness, no data
@@ -291,7 +319,7 @@ The first bank parser is `bca-pdf/1` (`saku/parsers/bca_pdf.py`) for the monthly
 - `BIAYA ...` and `PAJAK ...` rows are tagged `fee`. Descriptions pass through the normal redaction, so card, wallet and account numbers are stored as `[NUM]`.
 - Tests use synthetic PDFs built by `tests/bca_fixture.py` that copy the measured layout and encryption. No real statement is committed.
 
-Dashboard category details query the same tenant, category, half-open period `[start, end)`, and negative `normal`/`fee` transaction rules as the category aggregate. The filtered view is read-only; invalid filters are rejected rather than falling back to the unfiltered transaction list.
+Dashboard category details query the same tenant, category, half-open period `[start, end)`, and negative `normal`/`fee` transaction rules as the category aggregate. The filtered view is read-only; each row shows its category. Accessible controls allow changing category and inclusive date range, clearing the filter, or returning to the dashboard. Invalid filters are rejected rather than falling back to the unfiltered transaction list. Tests cover fee inclusion and refund/own-transfer exclusion using the same aggregate query.
 
 ### 3.10 Closed beta: public pages, registration, approval (F24 to F27)
 

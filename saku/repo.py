@@ -14,10 +14,11 @@ from decimal import Decimal
 
 import psycopg
 
-from .normalise import RawTxn, fingerprints, money, normalise_description
+from .normalise import MAX_LEDGER_AMOUNT, RawTxn, fingerprints, money, normalise_description
+from .planning import advance_schedule_date
 
 ACCOUNT_KINDS = {"bank", "ewallet", "cash"}
-SAFE_APP_PATHS = {"/app", "/app/accounts", "/app/imports", "/app/transactions", "/app/settings"}
+SAFE_APP_PATHS = {"/app", "/app/accounts", "/app/imports", "/app/transactions", "/app/plans", "/app/settings"}
 
 # A pair only counts as an own transfer when at least one side looks like a transfer or top-up.
 # Without this, a refund that happens to match a purchase amount on another account would be hidden.
@@ -153,6 +154,145 @@ class Repo:
             (tenant_id, category, start, end))
         keys = ("id", "booked_on", "account_id", "account", "amount", "description", "kind", "category")
         return [dict(zip(keys, row)) for row in cur.fetchall()]
+
+    def tenant_today(self, tenant_id: str) -> date:
+        row = self.c.execute(
+            "SELECT (now() AT TIME ZONE tz)::date FROM tenant WHERE id = %s", (tenant_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown tenant")
+        return row[0]
+
+    @staticmethod
+    def _goal_schedule_values(schedule_amount: Decimal | None, schedule_cadence: str | None,
+                              next_contribution_on: date | None) -> tuple[Decimal | None, str | None, int | None, date | None]:
+        if schedule_amount is None and schedule_cadence is None and next_contribution_on is None:
+            return None, None, None, None
+        if schedule_amount is None or schedule_cadence not in {"weekly", "monthly"} or next_contribution_on is None:
+            raise ValueError("schedule amount, cadence, and next date must be supplied together")
+        amount = money(schedule_amount)
+        if not amount.is_finite() or amount <= 0 or amount > MAX_LEDGER_AMOUNT:
+            raise ValueError("schedule amount must be positive and within the supported range")
+        return amount, schedule_cadence, next_contribution_on.day, next_contribution_on
+
+    def create_goal(self, tenant_id: str, name: str, target: Decimal, due_on: date | None = None,
+                    schedule_amount: Decimal | None = None, schedule_cadence: str | None = None,
+                    next_contribution_on: date | None = None, review_on: date | None = None) -> int:
+        name = name.strip()
+        target = money(target)
+        if not 1 <= len(name) <= 80:
+            raise ValueError("plan name must be 1 to 80 characters")
+        if not target.is_finite() or target <= 0 or target > MAX_LEDGER_AMOUNT:
+            raise ValueError("target must be positive and within the supported range")
+        schedule_amount, schedule_cadence, schedule_day, next_contribution_on = self._goal_schedule_values(
+            schedule_amount, schedule_cadence, next_contribution_on)
+        with self.c.transaction():
+            row = self.c.execute(
+                "INSERT INTO goal (tenant_id, name, target, due_on, saved, status, schedule_amount, "
+                "schedule_cadence, schedule_day, next_contribution_on, review_on) "
+                "VALUES (%s, %s, %s, %s, 0, 'active', %s, %s, %s, %s, %s) RETURNING id",
+                (tenant_id, name, target, due_on, schedule_amount, schedule_cadence,
+                 schedule_day, next_contribution_on, review_on),
+            ).fetchone()
+        return row[0]
+
+    def update_goal(self, tenant_id: str, goal_id: int, name: str, target: Decimal, due_on: date | None = None,
+                    schedule_amount: Decimal | None = None, schedule_cadence: str | None = None,
+                    next_contribution_on: date | None = None, review_on: date | None = None) -> bool:
+        name = name.strip()
+        target = money(target)
+        if not 1 <= len(name) <= 80:
+            raise ValueError("plan name must be 1 to 80 characters")
+        if not target.is_finite() or target <= 0 or target > MAX_LEDGER_AMOUNT:
+            raise ValueError("target must be positive and within the supported range")
+        schedule_amount, schedule_cadence, schedule_day, next_contribution_on = self._goal_schedule_values(
+            schedule_amount, schedule_cadence, next_contribution_on)
+        updated = self.c.execute(
+            "UPDATE goal SET name=%s, target=%s, due_on=%s, schedule_amount=%s, schedule_cadence=%s, "
+            "schedule_day=CASE WHEN schedule_cadence=%s AND next_contribution_on=%s THEN schedule_day ELSE %s END, "
+            "next_contribution_on=%s, review_on=%s WHERE id=%s AND tenant_id=%s",
+            (name, target, due_on, schedule_amount, schedule_cadence, schedule_cadence,
+             next_contribution_on, schedule_day, next_contribution_on, review_on, goal_id, tenant_id),
+        )
+        return updated.rowcount == 1
+
+    def list_goals(self, tenant_id: str) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT id, name, target, due_on, saved, status, schedule_amount, schedule_cadence, "
+            "schedule_day, next_contribution_on, review_on FROM goal WHERE tenant_id=%s "
+            "ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, due_on NULLS LAST, id",
+            (tenant_id,),
+        )
+        keys = ("id", "name", "target", "due_on", "saved", "status", "schedule_amount",
+                "schedule_cadence", "schedule_day", "next_contribution_on", "review_on")
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+
+    def goal_entries(self, tenant_id: str, goal_id: int) -> list[dict]:
+        cur = self.c.execute(
+            "SELECT id, entry_type, amount, booked_on, note FROM goal_entry "
+            "WHERE tenant_id=%s AND goal_id=%s ORDER BY booked_on DESC, id DESC",
+            (tenant_id, goal_id),
+        )
+        keys = ("id", "entry_type", "amount", "booked_on", "note")
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+
+    def record_goal_entry(self, tenant_id: str, goal_id: int, entry_type: str, amount: Decimal,
+                          booked_on: date, note: str = "") -> bool:
+        if entry_type not in {"contribution", "use"}:
+            raise ValueError("entry type must be contribution or use")
+        amount = money(amount)
+        note = note.strip()
+        if not amount.is_finite() or amount <= 0 or amount > MAX_LEDGER_AMOUNT or len(note) > 200:
+            raise ValueError("amount must be within the supported range and note must be at most 200 characters")
+        if booked_on > self.tenant_today(tenant_id):
+            raise ValueError("plan activity date cannot be in the future")
+        with self.c.transaction():
+            row = self.c.execute(
+                "SELECT saved, status, next_contribution_on, schedule_cadence, schedule_day, schedule_amount "
+                "FROM goal WHERE id=%s AND tenant_id=%s FOR UPDATE", (goal_id, tenant_id),
+            ).fetchone()
+            if row is None:
+                return False
+            saved, status, next_on, cadence, anchor_day, schedule_amount = row
+            if status != "active":
+                raise ValueError("only active plans can record activity")
+            delta = amount if entry_type == "contribution" else -amount
+            new_saved = saved + delta
+            if new_saved < 0:
+                raise ValueError("use cannot exceed the plan balance")
+            if new_saved > MAX_LEDGER_AMOUNT:
+                raise ValueError("plan balance exceeds the supported amount")
+            if entry_type == "contribution" and next_on is not None and booked_on >= next_on:
+                while next_on is not None and next_on <= booked_on:
+                    next_on = advance_schedule_date(next_on, cadence, anchor_day=anchor_day)
+                if next_on is None:
+                    schedule_amount = cadence = anchor_day = None
+            self.c.execute(
+                "UPDATE goal SET saved=%s, schedule_amount=%s, schedule_cadence=%s, schedule_day=%s, "
+                "next_contribution_on=%s WHERE id=%s AND tenant_id=%s",
+                (new_saved, schedule_amount, cadence, anchor_day, next_on, goal_id, tenant_id),
+            )
+            self.c.execute(
+                "INSERT INTO goal_entry (tenant_id, goal_id, entry_type, amount, booked_on, note) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (tenant_id, goal_id, entry_type, amount, booked_on, note),
+            )
+        return True
+
+    def set_goal_status(self, tenant_id: str, goal_id: int, status: str) -> bool:
+        if status not in {"active", "paused", "completed"}:
+            raise ValueError("unknown plan status")
+        updated = self.c.execute(
+            "UPDATE goal SET status=%s WHERE id=%s AND tenant_id=%s", (status, goal_id, tenant_id)
+        )
+        return updated.rowcount == 1
+
+    def spending_categories(self, tenant_id: str) -> list[str]:
+        rows = self.c.execute(
+            "SELECT DISTINCT COALESCE(category, 'other') FROM txn WHERE tenant_id=%s "
+            "AND amount < 0 AND kind IN ('normal', 'fee') ORDER BY 1", (tenant_id,)
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def _manual_fingerprint(self, tenant_id: str, account_id: int, booked_on: date,
                             amount: Decimal, description: str, source_ref: str) -> str:
@@ -339,7 +479,8 @@ class Repo:
             "transactions": ("SELECT id, tenant_id, account_id, batch_id, booked_on, amount, currency, description, kind, category, cat_source, cat_conf, fingerprint, transfer_pair, created_at FROM txn WHERE tenant_id = %s ORDER BY booked_on, id", (tenant_id,)),
             "category_rules": ("SELECT id, tenant_id, pattern, category, origin, created_at FROM category_rule WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
             "budgets": ("SELECT tenant_id, month, category, amount FROM budget WHERE tenant_id = %s ORDER BY month, category", (tenant_id,)),
-            "goals": ("SELECT id, tenant_id, name, target, due_on, saved FROM goal WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "goals": ("SELECT id, tenant_id, name, target, due_on, saved, status, schedule_amount, schedule_cadence, schedule_day, next_contribution_on, review_on FROM goal WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
+            "goal_entries": ("SELECT id, tenant_id, goal_id, entry_type, amount, booked_on, note, created_at FROM goal_entry WHERE tenant_id = %s ORDER BY goal_id, booked_on, id", (tenant_id,)),
             "wishlist": ("SELECT id, tenant_id, item, amount, asked_at, remind_at, outcome FROM wishlist WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
             "nudges": ("SELECT id, tenant_id, kind, sent_at, body, sources, reaction FROM nudge WHERE tenant_id = %s ORDER BY id", (tenant_id,)),
             "heartbeats": ("SELECT tenant_id, component, last_ok, last_error FROM heartbeat WHERE tenant_id = %s ORDER BY component", (tenant_id,)),
@@ -384,7 +525,7 @@ class Repo:
             self.c.execute("DELETE FROM telegram_link WHERE tenant_id = %s", (tenant_id,))
             self.c.execute("UPDATE txn SET transfer_pair = NULL WHERE tenant_id = %s", (tenant_id,))
             self.c.execute("DELETE FROM txn WHERE tenant_id = %s", (tenant_id,))
-            for table in ("import_batch", "category_rule", "budget", "goal", "wishlist", "nudge", "heartbeat", "account"):
+            for table in ("import_batch", "category_rule", "budget", "goal_entry", "goal", "wishlist", "nudge", "heartbeat", "account"):
                 self.c.execute(f"DELETE FROM {table} WHERE tenant_id = %s", (tenant_id,))
             self.c.execute("DELETE FROM member WHERE tenant_id = %s", (tenant_id,))
             return self.c.execute("DELETE FROM tenant WHERE id = %s", (tenant_id,)).rowcount == 1
